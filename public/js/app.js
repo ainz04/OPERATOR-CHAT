@@ -31,6 +31,7 @@ let interceptedMessages = [];
 let interceptedPairs = new Map(); // pairKey -> { aName, aCode, bName, bCode, msgs: [] }
 let activeWiretapPairKey = 'ALL';
 let vaultFiles = [];
+let activeNetworkLinks = new Map(); // pairKey -> { key, codeA, nameA, codeB, nameB, establishedAt, lastActivity, msgCount }
 
 // DOM Helpers
 const $ = (sel) => document.querySelector(sel);
@@ -114,6 +115,9 @@ $('#btn-audio-toggle')?.addEventListener('click', () => {
 // ==========================================================================
 
 function initApp() {
+  // Purge any legacy un-scoped messages to ensure stale chats from other sessions never stick
+  localStorage.removeItem('fdi_messages');
+
   const savedProfile = localStorage.getItem('fdi_user_profile');
   if (savedProfile) {
     try {
@@ -251,6 +255,19 @@ function setupUserSession(user) {
   initServerlessMQTT();
 }
 
+// Complete client trace wiper (vaporizes 10000% of all local data without traces)
+function wipeAllClientTraces() {
+  const keysToRemove = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && k.startsWith('fdi_')) {
+      keysToRemove.push(k);
+    }
+  }
+  keysToRemove.forEach((k) => localStorage.removeItem(k));
+  sessionStorage.clear();
+}
+
 // DISCONNECT: Burns active rooms and clears history cleanly for non-Level S
 $('#btn-logout')?.addEventListener('click', () => {
   if (currentUser && currentUser.role !== 'admin') {
@@ -264,17 +281,55 @@ $('#btn-logout')?.addEventListener('click', () => {
       }, 1);
     }
 
-    // Completely wipe all local history & grants without leaving any trace
-    localStorage.removeItem('fdi_user_profile');
-    localStorage.removeItem('fdi_messages');
-    localStorage.removeItem('fdi_grants');
-    localStorage.removeItem('fdi_discovered_subjects');
+    // Broadcast link termination
+    publishPacket('fdi_operator_v1/links', {
+      action: 'link_terminated',
+      codeA: currentUser.accessCode
+    }, 1);
+
+    wipeAllClientTraces();
   } else {
     // Admin logout: logout without wiping system surveillance
     localStorage.removeItem('fdi_user_profile');
   }
 
   window.fdiAudio.alertDenied();
+  window.location.reload();
+});
+
+// HAPUS AKUN SAYA (10000% Self Account Destruction)
+$('#btn-purge-self')?.addEventListener('click', () => {
+  if (!currentUser) return;
+  const ok = confirm(`PERINGATAN KRITIS: HAPUS AKUN 10000%?\n\nApakah Anda yakin ingin memusnahkan akun "${currentUser.username}" secara permanen?\nSeluruh riwayat, room, dan kunci enkripsi akan dimusnahkan tanpa meninggalkan jejak sedikitpun!`);
+  if (!ok) return;
+
+  // Broadcast to network that this account is nuked
+  publishPacket('fdi_operator_v1/cmd/purge', {
+    action: 'account_nuked',
+    targetCode: currentUser.accessCode,
+    targetUsername: currentUser.username,
+    reason: 'SELF_PURGE'
+  }, 1);
+
+  // Notify any peers currently linked
+  const grants = getStoredGrants();
+  for (const peerCode of Object.keys(grants)) {
+    publishPacket(`fdi_operator_v1/cmd/${peerCode}`, {
+      action: 'account_nuked',
+      targetCode: currentUser.accessCode,
+      targetUsername: currentUser.username
+    }, 1);
+  }
+
+  // Terminate any links
+  publishPacket('fdi_operator_v1/links', {
+    action: 'link_terminated',
+    codeA: currentUser.accessCode
+  }, 1);
+
+  wipeAllClientTraces();
+  window.fdiAudio.alertDenied();
+  alert('[10000% VAPORIZED] AKUN & IDENTITAS ANDA TELAH DIHAPUS TOTAL TANPA MENINGGALKAN JEJAK.');
   window.location.reload();
 });
 
@@ -338,8 +393,12 @@ function initServerlessMQTT() {
       mqttClient.subscribe('fdi_operator_v1/presence', { qos: 0 });
       // 4. Subscribe to network broadcasts
       mqttClient.subscribe('fdi_operator_v1/broadcast', { qos: 1 });
-      // 5. Subscribe to personal command channel (for kick/ban/revoke/burn)
+      // 5. Subscribe to personal command channel (for kick/ban/revoke/burn/nuke)
       mqttClient.subscribe(`fdi_operator_v1/cmd/${currentUser.accessCode}`, { qos: 1 });
+      // 6. Subscribe to global account purge broadcast channel
+      mqttClient.subscribe('fdi_operator_v1/cmd/purge', { qos: 1 });
+      // 7. Subscribe to real-time bilateral link status channel
+      mqttClient.subscribe('fdi_operator_v1/links', { qos: 1 });
 
       // If Level S Admin: subscribe to ALL network topics (Omniscient Wiretap)
       if (currentUser.role === 'admin') {
@@ -438,37 +497,55 @@ function handleIncomingNetworkPacket(topic, payloadStr) {
     addAuditLog('BROADCAST_RCVD', data.text);
   }
 
-  // 5. Command Channel: Kick, Ban, Revoke, or SESSION BURN
-  else if (topic === `fdi_operator_v1/cmd/${currentUser.accessCode}`) {
-    // SESSION BURN: The other party disconnected before 5 hours finished
+  // 5. Bilateral Link Status Channel
+  else if (topic === 'fdi_operator_v1/links') {
+    if (data.action === 'link_established') {
+      recordNetworkLink(data.fromCode, data.fromName, data.toCode, data.toName, true);
+    } else if (data.action === 'link_terminated') {
+      removeNetworkLink(data.codeA, data.codeB);
+    }
+  }
+
+  // 6. Global or Targeted Purge Channel (10000% Identity Annihilation)
+  else if (topic === 'fdi_operator_v1/cmd/purge' || topic === `fdi_operator_v1/cmd/${currentUser.accessCode}`) {
+    if (data.action === 'account_nuked' || data.action === 'force_nuke_account') {
+      const isTarget = currentUser && (
+        currentUser.accessCode === data.targetCode ||
+        currentUser.accessCode === data.accessCode ||
+        (data.targetUsername && currentUser.username.toUpperCase() === data.targetUsername.toUpperCase())
+      );
+
+      if (isTarget) {
+        window.fdiAudio.alertDenied();
+        alert(`[!] PERINGATAN SISTEM FDI: AKUN ANDA TELAH DIMUSNAHKAN 10000% SECARA PERMANEN OLEH LEVEL S OPERATOR.\n\nSeluruh file identitas, sesi, dan riwayat di perangkat ini telah dihapus bersih tanpa jejak.`);
+        wipeAllClientTraces();
+        window.location.reload();
+        return;
+      }
+
+      // Purge subject from this client's memory & storage
+      const tCode = data.targetCode || data.accessCode;
+      const tName = data.targetUsername || data.username || 'subjek';
+      executeLocalPurgeForSubject(tCode, tName);
+      showToast(`Akun ${tName} telah dimusnahkan 10000% dari jaringan.`);
+      addAuditLog('ACCOUNT_PURGED', `${tName} (${tCode}) purged from network`);
+      return;
+    }
+
+    // Direct Command Channel Actions
     if (data.action === 'session_burned') {
       if (currentUser.role !== 'admin') {
-        // Delete all messages with the disconnected peer
-        const allMsgs = JSON.parse(localStorage.getItem('fdi_messages') || '{}');
-        delete allMsgs[data.burnedBy];
-        localStorage.setItem('fdi_messages', JSON.stringify(allMsgs));
-
-        // Delete grant with the disconnected peer
+        clearStoredMessagesForPeer(data.burnedBy);
         const grants = getStoredGrants();
         delete grants[data.burnedBy];
         localStorage.setItem('fdi_grants', JSON.stringify(grants));
 
-        // If currently chatting with them, lock and clear immediately
         if (activeContact && activeContact.accessCode === data.burnedBy) {
-          $('#messages-container').innerHTML = '';
-          $('#chat-input-panel').style.display = 'none';
-          $('#chat-expired-banner').style.display = 'flex';
-          $('#chat-expired-banner').innerHTML = `
-            <div>[!] SUBJECT ${escapeHtml(data.username || 'PEER')} DISCONNECTED. TRANSMISSION SESSION BURNED. Re-enter code to reconnect.</div>
-            <button class="btn-fdi-primary" id="btn-reopen-code" style="padding:4px 10px; font-size:11px;">ENTER CODE</button>
-          `;
-          $('#btn-reopen-code')?.addEventListener('click', () => $('#btn-open-code-modal').click());
-          activeContact = null;
-          $('#active-chat-header').style.display = 'none';
-          $('#empty-chat-placeholder').style.display = 'flex';
+          unselectActiveContact(`[!] SUBJECT ${escapeHtml(data.username || 'PEER')} DISCONNECTED. TRANSMISSION SESSION BURNED. Re-enter code to reconnect.`);
         }
 
         contactsMap.delete(data.burnedBy);
+        removeNetworkLink(data.burnedBy);
         renderContactsList();
         window.fdiAudio.alertDenied();
         showToast(`Subject ${data.username || 'peer'} disconnected. Comms channel burned.`);
@@ -482,7 +559,7 @@ function handleIncomingNetworkPacket(topic, payloadStr) {
     } else if (data.action === 'ban') {
       window.fdiAudio.alertDenied();
       alert(`[!] SUBJECT ACCOUNT BANNED BY LEVEL S OPERATOR.`);
-      localStorage.removeItem('fdi_user_profile');
+      wipeAllClientTraces();
       window.location.reload();
     } else if (data.action === 'revoke') {
       showToast('Active 5-hour access window revoked by Level S operator', true);
@@ -657,6 +734,68 @@ function updateContactTimers() {
 // ACTIVE CHAT TRANSCRIPT & P2P TRANSMISSION
 // ==========================================================================
 
+function getMessagesKey() {
+  return currentUser ? `fdi_msgs_${currentUser.accessCode}` : 'fdi_messages';
+}
+
+function getStoredMessages(peerCode) {
+  try {
+    const key = getMessagesKey();
+    const all = JSON.parse(localStorage.getItem(key) || '{}');
+    return all[peerCode] || [];
+  } catch {
+    return [];
+  }
+}
+
+function saveStoredMessage(peerCode, msg) {
+  try {
+    const key = getMessagesKey();
+    const all = JSON.parse(localStorage.getItem(key) || '{}');
+    if (!all[peerCode]) all[peerCode] = [];
+    all[peerCode].push(msg);
+    localStorage.setItem(key, JSON.stringify(all));
+  } catch (err) {
+    console.error('Failed to save message', err);
+  }
+}
+
+function clearStoredMessagesForPeer(peerCode) {
+  try {
+    const key = getMessagesKey();
+    const all = JSON.parse(localStorage.getItem(key) || '{}');
+    delete all[peerCode];
+    localStorage.setItem(key, JSON.stringify(all));
+  } catch (err) {
+    console.error('Failed to clear messages for peer', err);
+  }
+}
+
+function unselectActiveContact(burnMessage = null) {
+  activeContact = null;
+  const emptyPlaceholder = $('#empty-chat-placeholder');
+  const msgContainer = $('#messages-container');
+  if (msgContainer) {
+    msgContainer.innerHTML = '';
+    msgContainer.style.display = 'none';
+  }
+  if (emptyPlaceholder) emptyPlaceholder.style.display = 'flex';
+  $('#active-chat-header').style.display = 'none';
+  $('#chat-bilateral-banner').style.display = 'none';
+  $('#chat-input-panel').style.display = 'none';
+
+  if (burnMessage) {
+    $('#chat-expired-banner').style.display = 'flex';
+    $('#chat-expired-banner').innerHTML = `
+      <div>${burnMessage}</div>
+      <button class="btn-fdi-primary" id="btn-reopen-code" style="padding:4px 10px; font-size:11px;">ENTER CODE</button>
+    `;
+    $('#btn-reopen-code')?.addEventListener('click', () => $('#btn-open-code-modal').click());
+  } else {
+    $('#chat-expired-banner').style.display = 'none';
+  }
+}
+
 function selectContact(peerCode) {
   const contact = contactsMap.get(peerCode);
   if (!contact) return;
@@ -665,8 +804,19 @@ function selectContact(peerCode) {
   renderContactsList();
   updateActiveContactHeader();
 
-  $('#empty-chat-placeholder').style.display = 'none';
+  const emptyPlaceholder = $('#empty-chat-placeholder');
+  const msgContainer = $('#messages-container');
+  if (emptyPlaceholder) emptyPlaceholder.style.display = 'none';
+  if (msgContainer) msgContainer.style.display = 'flex';
   $('#active-chat-header').style.display = 'flex';
+
+  // Bilateral link banner in Comms
+  const linkBanner = $('#chat-bilateral-banner');
+  const linkInfo = $('#chat-bilateral-info');
+  if (linkBanner && linkInfo) {
+    linkBanner.style.display = 'flex';
+    linkInfo.innerHTML = `ACTIVE BILATERAL LINK: <strong style="color:var(--fdi-green);">${escapeHtml(currentUser.username)}</strong> <span style="color:var(--fdi-amber); margin:0 4px;">⇄</span> <strong style="color:var(--fdi-green);">${escapeHtml(contact.username)}</strong> (${contact.accessCode})`;
+  }
 
   const now = Date.now();
   const isAccessible = contact.unlimited || (contact.expiresAt && contact.expiresAt > now);
@@ -688,34 +838,31 @@ function updateActiveContactHeader() {
   $('#active-peer-status').innerHTML = activeContact.online
     ? `<span class="online-dot is-online"></span> LINK ONLINE // CLOUD WSS`
     : `<span class="online-dot"></span> ASYNC QUEUED`;
+  const tagText = $('#active-bilateral-text');
+  if (tagText) {
+    tagText.textContent = `LINKED ⇄ ${activeContact.username.toUpperCase()}`;
+  }
   updateContactTimers();
-}
-
-function getStoredMessages(peerCode) {
-  try {
-    const all = JSON.parse(localStorage.getItem('fdi_messages') || '{}');
-    return all[peerCode] || [];
-  } catch {
-    return [];
-  }
-}
-
-function saveStoredMessage(peerCode, msg) {
-  try {
-    const all = JSON.parse(localStorage.getItem('fdi_messages') || '{}');
-    if (!all[peerCode]) all[peerCode] = [];
-    all[peerCode].push(msg);
-    localStorage.setItem('fdi_messages', JSON.stringify(all));
-  } catch (err) {
-    console.error('Failed to save message', err);
-  }
 }
 
 function loadConversationHistory(peerCode) {
   const container = $('#messages-container');
+  if (!container) return;
   container.innerHTML = '';
   const msgs = getStoredMessages(peerCode);
-  msgs.forEach((m) => appendChatMessage(m, false));
+  if (msgs.length === 0) {
+    const emptyNotice = document.createElement('div');
+    emptyNotice.className = 'empty-thread-notice';
+    emptyNotice.innerHTML = `
+      <div style="text-align:center; padding:24px 16px; color:var(--text-dim); font-size:12px;">
+        <div style="color:var(--fdi-green); font-weight:700; margin-bottom:4px;">[SECURE BILATERAL COMMS TUNNEL INITIALIZED]</div>
+        <div>Transmission history is strictly ephemeral. End-to-end encrypted channel is ready.</div>
+      </div>
+    `;
+    container.appendChild(emptyNotice);
+  } else {
+    msgs.forEach((m) => appendChatMessage(m, false));
+  }
   container.scrollTop = container.scrollHeight;
 }
 
@@ -798,6 +945,7 @@ function transmitMessage() {
   // Save locally and render
   saveStoredMessage(activeContact.accessCode, msgObj);
   appendChatMessage(msgObj, true);
+  recordNetworkLink(currentUser.accessCode, currentUser.username, activeContact.accessCode, activeContact.username, false);
 
   input.value = '';
   window.fdiAudio.typeKey('Enter');
@@ -832,6 +980,7 @@ function emitTyping(isTyping) {
 
 function handleIncomingMessage(msg) {
   saveStoredMessage(msg.fromCode, msg);
+  recordNetworkLink(msg.fromCode, msg.fromName, msg.toCode || currentUser.accessCode, msg.toName || currentUser.username, false);
 
   // If sender not in contacts, add grant only if active link
   if (!contactsMap.has(msg.fromCode)) {
@@ -1011,6 +1160,18 @@ function handleAccessCodeSubmit() {
   // Save 5-hour grant
   saveGrant(code, peerName, 5 * 60 * 60 * 1000);
 
+  // Broadcast bilateral link to network
+  publishPacket('fdi_operator_v1/links', {
+    action: 'link_established',
+    fromCode: currentUser.accessCode,
+    fromName: currentUser.username,
+    toCode: code,
+    toName: peerName,
+    ts: Date.now()
+  }, 1);
+
+  recordNetworkLink(currentUser.accessCode, currentUser.username, code, peerName, true);
+
   window.fdiAudio.chimeSuccess();
   $('#modal-access-code').style.display = 'none';
   showToast(`5-Hour window opened with ${peerName}`);
@@ -1150,12 +1311,14 @@ function handleTerminalCommand(raw) {
  help                     daftar perintah
  stats                    statistik sistem & traffic
  users                    semua subjek terdaftar di jaringan
+ links                    pantau seluruh koneksi bilateral (siapa bicara dengan siapa)
  whois <user>             profil lengkap & access code subjek
  feed                     pesan-pesan terbaru di jaringan
  broadcast <pesan>        kirim transmisi darurat ke semua node
  kick <code/user>         putuskan sesi subjek
  ban <code/user>          blokir subjek
  revoke <code/user>       cabut jendela akses 5 jam
+ nuke <code/user>         MUSNAHKAN AKUN 10000% TANPA JEJAK
  clear                    bersihkan layar terminal
     `);
   } else if (cmd === 'stats') {
@@ -1164,6 +1327,7 @@ function handleTerminalCommand(raw) {
  SUBJECTS DISCOVERED ... ${subs.length + 1}
  CLOUD WSS BROKER ...... broker.emqx.io:8084
  INTERCEPTED TRAFFIC ... ${interceptedMessages.length} msgs
+ ACTIVE BILATERAL LINKS  ${activeNetworkLinks.size} active sessions
  AUDIT LOGS RECORDED .. ${auditLogs.length} events
  CLEARANCE STATUS ...... LEVEL S (ACTIVE)
     `);
@@ -1175,6 +1339,17 @@ function handleTerminalCommand(raw) {
       out += `${String(idx + 2).padStart(3, '0')}       ${s.username.padEnd(14)} AGENT       ${s.accessCode} ONLINE\n`;
     });
     appendTermOutput(out);
+  } else if (cmd === 'links') {
+    const links = [...activeNetworkLinks.values()];
+    if (links.length === 0) {
+      appendTermOutput('No active bilateral interconnect links at this moment.');
+    } else {
+      let out = 'ACTIVE BILATERAL INTERCONNECTIONS (WHO IS TALKING TO WHO):\n-----------------------------------------------------------\n';
+      links.forEach((l) => {
+        out += `${l.nameA} (${l.codeA}) <====[ ACTIVE P2P LINK ]====> ${l.nameB} (${l.codeB}) [${l.msgCount || 0} msgs]\n`;
+      });
+      appendTermOutput(out);
+    }
   } else if (cmd === 'broadcast') {
     const text = args.join(' ');
     if (!text) {
@@ -1184,6 +1359,18 @@ function handleTerminalCommand(raw) {
     publishPacket('fdi_operator_v1/broadcast', { text, sender: 'OPERATOR TANNER' }, 1);
     appendTermOutput(`[+] Broadcast transmitted to all network nodes.`);
     showToast('Broadcast transmitted');
+  } else if (cmd === 'nuke' || cmd === 'purge' || cmd === 'hapusakun') {
+    const target = args[0];
+    if (!target) {
+      appendTermOutput(`ERROR: Target username or code required. Usage: ${cmd} <code/user>`, true);
+      return;
+    }
+    const subs = getDiscoveredSubjects();
+    const sub = subs.find((s) => s.accessCode === target || s.username.toUpperCase() === target.toUpperCase());
+    const targetCode = sub ? sub.accessCode : target;
+    const targetName = sub ? sub.username : target;
+    adminNukeAccount(targetCode, targetName);
+    appendTermOutput(`[+] 10000% Purge command signaled for ${targetName} (${targetCode})`);
   } else if (cmd === 'kick' || cmd === 'ban' || cmd === 'revoke') {
     const target = args[0];
     if (!target) {
@@ -1198,7 +1385,182 @@ function handleTerminalCommand(raw) {
   }
 }
 
-// 2. DATABASE CONTROLLER (Includes OPEN COMMS button for Level S)
+// ==========================================================================
+// BILATERAL LINK NETWORK TRACKER (Who is Connected with Whom)
+// ==========================================================================
+
+function getPairKey(code1, code2) {
+  return [code1, code2].sort().join('<->');
+}
+
+function recordNetworkLink(code1, name1, code2, name2, isNew = false) {
+  if (!code1 || !code2 || code1 === code2) return;
+  const key = getPairKey(code1, code2);
+  const existing = activeNetworkLinks.get(key) || {
+    key,
+    codeA: code1,
+    nameA: name1 || code1.substr(0, 6),
+    codeB: code2,
+    nameB: name2 || code2.substr(0, 6),
+    establishedAt: Date.now(),
+    lastActivity: Date.now(),
+    msgCount: 0
+  };
+  existing.lastActivity = Date.now();
+  if (!isNew) {
+    existing.msgCount = (existing.msgCount || 0) + 1;
+  }
+  activeNetworkLinks.set(key, existing);
+  renderRadarInterconnectTable();
+  if (currentUser?.role === 'admin') {
+    renderDatabaseTable(getDiscoveredSubjects());
+  }
+}
+
+function removeNetworkLink(code1, code2) {
+  if (code2) {
+    activeNetworkLinks.delete(getPairKey(code1, code2));
+  } else {
+    for (const [key, link] of activeNetworkLinks.entries()) {
+      if (link.codeA === code1 || link.codeB === code1) {
+        activeNetworkLinks.delete(key);
+      }
+    }
+  }
+  renderRadarInterconnectTable();
+  if (currentUser?.role === 'admin') {
+    renderDatabaseTable(getDiscoveredSubjects());
+  }
+}
+
+function getLinkedPeerForUser(userCode) {
+  for (const link of activeNetworkLinks.values()) {
+    if (link.codeA === userCode) return { code: link.codeB, name: link.nameB };
+    if (link.codeB === userCode) return { code: link.codeA, name: link.nameA };
+  }
+  return null;
+}
+
+function renderRadarInterconnectTable() {
+  const tbody = $('#radar-interconnect-tbody');
+  const countEl = $('#radar-active-links-count');
+  if (!tbody) return;
+
+  const links = [...activeNetworkLinks.values()];
+  if (countEl) countEl.textContent = `${links.length} ACTIVE LINKS`;
+
+  if (links.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="6" style="text-align:center; color:var(--text-dim); padding:16px;">
+          No bilateral comms links active at this moment.
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  tbody.innerHTML = '';
+  const now = Date.now();
+  links.forEach((l) => {
+    const elapsedSecs = Math.floor((now - l.establishedAt) / 1000);
+    const durationStr = `${Math.floor(elapsedSecs / 60)}m ${elapsedSecs % 60}s`;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="font-weight:700; color:var(--text-bright);">${escapeHtml(l.nameA)} <span style="font-size:10px; color:var(--text-dim);">(${l.codeA})</span></td>
+      <td style="color:var(--fdi-amber); font-weight:700; text-align:center;">
+        <span class="link-pulse-dot" style="margin-right:4px;"></span> ⇄ ENCRYPTED P2P ⇄
+      </td>
+      <td style="font-weight:700; color:var(--text-bright);">${escapeHtml(l.nameB)} <span style="font-size:10px; color:var(--text-dim);">(${l.codeB})</span></td>
+      <td style="color:var(--fdi-green); font-weight:700; text-align:center;">${l.msgCount || 0} msgs</td>
+      <td><span class="badge-linked">ACTIVE LINK</span> <span style="font-size:10px; color:var(--text-dim);">(${durationStr})</span></td>
+      <td>
+        <button class="btn-action-cell" onclick="enterInterceptRoom('${l.codeA}', '${l.codeB}', '${escapeHtml(l.nameA)}', '${escapeHtml(l.nameB)}')">ENTER WIRETAP</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+// ==========================================================================
+// 10000% LOCAL & REMOTE ACCOUNT PURGE CONTROLLER
+// ==========================================================================
+
+function executeLocalPurgeForSubject(targetCode, targetUsername) {
+  if (!targetCode) return;
+
+  // 1. Remove from contactsMap
+  contactsMap.delete(targetCode);
+
+  // 2. Remove from discovered subjects in localStorage
+  const list = getDiscoveredSubjects().filter((s) => s.accessCode !== targetCode && (!targetUsername || s.username.toUpperCase() !== targetUsername.toUpperCase()));
+  localStorage.setItem('fdi_discovered_subjects', JSON.stringify(list));
+
+  // 3. Remove from grants
+  const grants = getStoredGrants();
+  delete grants[targetCode];
+  localStorage.setItem('fdi_grants', JSON.stringify(grants));
+
+  // 4. Remove stored messages for target
+  clearStoredMessagesForPeer(targetCode);
+
+  // 5. Remove from activeNetworkLinks
+  removeNetworkLink(targetCode);
+
+  // 6. Remove from intercepted pairs
+  for (const [key, p] of interceptedPairs.entries()) {
+    if (p.aCode === targetCode || p.bCode === targetCode) {
+      interceptedPairs.delete(key);
+    }
+  }
+
+  // 7. If currently open chat is with target, burn it immediately
+  if (activeContact && activeContact.accessCode === targetCode) {
+    unselectActiveContact(`[!] AKUN ${escapeHtml(targetUsername || 'SUBJEK')} TELAH DIMUSNAHKAN 10000%. ROOM CHAT DIHAPUS TOTAL TANPA JEJAK.`);
+  }
+
+  renderContactsList();
+  if (currentUser?.role === 'admin') {
+    renderDatabaseTable(list);
+    renderInterceptChannels();
+  }
+}
+
+window.adminNukeAccount = function (targetCode, targetUsername) {
+  if (!currentUser || currentUser.role !== 'admin') return;
+  if (targetCode === ADMIN_ACCESS_CODE || (targetUsername && targetUsername.toUpperCase() === ADMIN_USERNAME)) {
+    showToast('CANNOT PURGE ROOT OPERATOR TANNER', true);
+    return;
+  }
+
+  const ok = confirm(`PERINGATAN KRITIS: MUSNAHKAN AKUN ${targetUsername} (${targetCode}) 10000%?\n\nAkun ini dan seluruh riwayatnya di semua perangkat akan dimusnahkan secara permanen tanpa sisa!`);
+  if (!ok) return;
+
+  // 1. Send direct kill command to target
+  publishPacket(`fdi_operator_v1/cmd/${targetCode}`, {
+    action: 'account_nuked',
+    targetCode,
+    targetUsername,
+    initiatedBy: 'OPERATOR TANNER (LEVEL S)'
+  }, 1);
+
+  // 2. Broadcast purge to all network nodes so everyone drops the user
+  publishPacket('fdi_operator_v1/cmd/purge', {
+    action: 'account_nuked',
+    targetCode,
+    targetUsername,
+    initiatedBy: 'OPERATOR TANNER (LEVEL S)'
+  }, 1);
+
+  // 3. Purge from local admin storage & memory
+  executeLocalPurgeForSubject(targetCode, targetUsername);
+
+  window.fdiAudio.alertDenied();
+  showToast(`AKUN ${targetUsername} TELAH DIMUSNAHKAN 10000% TANPA JEJAK!`);
+  addAuditLog('ACCOUNT_NUKED', `Operator Tanner executed 10000% purge on ${targetUsername} (${targetCode})`);
+};
+
+// 2. DATABASE CONTROLLER (Includes OPEN COMMS & NUKE buttons for Level S)
 function renderDatabaseTable(users) {
   const tbody = $('#db-users-table-body');
   if (!tbody) return;
@@ -1214,6 +1576,10 @@ function renderDatabaseTable(users) {
   filtered.forEach((u) => {
     const tr = document.createElement('tr');
     const isSubjectAdmin = u.role === 'admin';
+    const linked = getLinkedPeerForUser(u.accessCode);
+    const linkCell = linked
+      ? `<span class="badge-linked">⇄ ${escapeHtml(linked.name)}</span>`
+      : `<span class="badge-unlinked">STANDBY (UNLINKED)</span>`;
 
     tr.innerHTML = `
       <td>${u.id || '--'}</td>
@@ -1221,14 +1587,14 @@ function renderDatabaseTable(users) {
       <td>${isSubjectAdmin ? '<span class="level-s-tag">LEVEL S</span>' : 'AGENT'}</td>
       <td style="font-family:var(--font-pixel); font-size:16px; color:var(--fdi-green);">${u.accessCode}</td>
       <td><span class="stat-val">ONLINE</span></td>
-      <td>--</td>
+      <td>${linkCell}</td>
       <td style="font-size:11px;">${new Date().toLocaleDateString()}</td>
       <td>
         ${!isSubjectAdmin ? `
           <button class="btn-action-cell" onclick="joinSubjectComms('${u.accessCode}', '${escapeHtml(u.username)}')">OPEN COMMS</button>
           <button class="btn-action-cell" onclick="adminAction('revoke', '${u.accessCode}')">REVOKE 5H</button>
           <button class="btn-action-cell danger" onclick="adminAction('kick', '${u.accessCode}')">KICK</button>
-          <button class="btn-action-cell danger" onclick="adminAction('ban', '${u.accessCode}')">BAN</button>
+          <button class="btn-action-cell danger" style="color:var(--fdi-red); border-color:var(--fdi-red); font-weight:700;" onclick="adminNukeAccount('${u.accessCode}', '${escapeHtml(u.username)}')">HAPUS AKUN (10000%)</button>
         ` : '<span style="color:var(--text-dim);">PROTECTED</span>'}
       </td>
     `;
@@ -1550,6 +1916,8 @@ function loadMonitorStats() {
   $('#mon-stat-online').textContent = mqttConnected ? subs.length + 1 : 0;
   $('#mon-stat-msgs').textContent = interceptedMessages.length;
   $('#mon-stat-grants').textContent = Object.keys(getStoredGrants()).length;
+
+  renderRadarInterconnectTable();
 
   const logBox = $('#mon-logs-feed');
   logBox.innerHTML = auditLogs
