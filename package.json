@@ -1,0 +1,24 @@
+{
+  "name": "operator-chat",
+  "version": "1.0.0",
+  "private": true,
+  "description": "FDI-styled retro terminal chat with access-code windows and a single Level S administrator.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server.js",
+    "dev": "node --watch --disable-warning=ExperimentalWarning server.js"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cookie": "^0.7.2",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.5.0",
+    "socket.io": "^4.8.1"
+  }
+}
