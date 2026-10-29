@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FDI OPERATOR // TACTICAL SECURE TERMINAL</title>
+  <link rel="stylesheet" href="css/style.css">
+  <!-- Paho MQTT WebSockets Client (Serverless Cloud Engine) -->
+  <script src="paho-mqtt.min.js"></script>
+</head>
+<body>
+  <!-- CRT Phosphor Screen Simulation -->
+  <div class="crt-overlay"></div>
+  <div class="crt-scanline"></div>
+
+  <div id="app-root">
+    <!-- Top System Header Bar -->
+    <header class="fdi-topbar">
+      <div class="fdi-brand">
+        <div class="fdi-badge">
+          <svg class="fdi-logo-icon" viewBox="0 0 24 24">
+            <polygon points="12,2 22,8.5 22,15.5 12,22 2,15.5 2,8.5" fill="none" stroke="currentColor" stroke-width="2"/>
+            <circle cx="12" cy="12" r="3" fill="currentColor"/>
+          </svg>
+          <span>FDI OPERATOR</span>
+        </div>
+        <span class="system-tag">FED-SYS v4.81 // SERVERLESS CLOUD NODE</span>
+      </div>
+
+      <div class="fdi-status-cluster">
+        <div class="stat-pill">
+          <span>TIME:</span>
+          <span class="stat-val" id="top-clock">00:00:00</span>
+        </div>
+        <div class="stat-pill">
+          <span>LINK:</span>
+          <span class="stat-val" id="top-link-status" style="color:var(--fdi-amber);">CONNECTING...</span>
+        </div>
+        <div id="admin-indicator-slot"></div>
+        <button class="audio-toggle-btn" id="btn-audio-toggle">
+          AUDIO: <span id="audio-status-label" style="color:var(--fdi-green);">ON</span>
+        </button>
+        <div id="user-header-profile" style="display:none; align-items:center; gap:8px;">
+          <span id="top-username" style="font-weight:700; color:var(--text-bright);">AGENT</span>
+          <button class="btn-retro-sm" id="btn-logout" title="Disconnect Terminal">DISCONNECT</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Master Operator Workspace -->
+    <div class="operator-workspace">
+      <!-- Navigation Dock (Tools & Level S Console) -->
+      <nav class="fdi-nav-dock">
+        <button class="dock-btn active" data-mod="chat" title="Comms Channel">
+          <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          <span>COMMS</span>
+        </button>
+
+        <!-- Admin Level S Exclusive Dock Tools -->
+        <div id="admin-dock-tools" style="display:none; flex-direction:column; gap:12px; align-items:center;">
+          <button class="dock-btn admin-exclusive" data-mod="terminal" title="Operator Terminal">
+            <svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+            <span>TERM</span>
+          </button>
+          <button class="dock-btn admin-exclusive" data-mod="database" title="Subject Database">
+            <svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+            <span>DATA</span>
+          </button>
+          <button class="dock-btn admin-exclusive" data-mod="intercept" title="Wiretap & Surveillance">
+            <svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            <span>TAP</span>
+          </button>
+          <button class="dock-btn admin-exclusive" data-mod="analyzer" title="File Forensic Analyzer">
+            <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+            <span>FILE</span>
+          </button>
+          <button class="dock-btn admin-exclusive" data-mod="audio" title="Audio Waveform Analyzer">
+            <svg viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+            <span>AUDIO</span>
+          </button>
+          <button class="dock-btn admin-exclusive" data-mod="decryptor" title="Decryption Matrix">
+            <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <span>CRYPT</span>
+          </button>
+          <button class="dock-btn admin-exclusive" data-mod="monitor" title="Real-Time Network Radar">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><line x1="2" y1="12" x2="22" y2="12"/></svg>
+            <span>RADAR</span>
+          </button>
+        </div>
+      </nav>
+
+      <!-- Main Dynamic Workspace Window -->
+      <main class="fdi-window" id="main-workspace-window">
+        <!-- 1. MODULE: CHAT -->
+        <section id="module-chat" class="workspace-module active" style="height:100%; display:flex; flex-direction:column;">
+          <div class="window-header">
+            <span id="chat-win-title">OPERATOR COMMS CONSOLE // TERMINAL LINK</span>
+            <div class="window-header-actions">
+              <span id="session-security-tag" style="font-size:11px; color:var(--text-dim);">TUNNEL: P2P WSS // AES-GCM</span>
+            </div>
+          </div>
+
+          <div class="chat-container">
+            <!-- Sidebar: Contacts & 5-hour Windows -->
+            <aside class="contacts-sidebar">
+              <div class="user-identity-card">
+                <div class="id-label">YOUR PRIVATE ACCESS CODE</div>
+                <div class="id-code-row">
+                  <span class="my-access-code" id="my-code-display">---- ---- ----</span>
+                  <button class="btn-copy-code" id="btn-copy-my-code">COPY</button>
+                </div>
+              </div>
+
+              <div class="sidebar-actions">
+                <button class="btn-connect-code" id="btn-open-code-modal">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-6 6l-2 2m-6 6l-2 2"/><line x1="15" y1="9" x2="15.01" y2="9"/><path d="M15.5 8.5l3 3L7 23H3v-4L14.5 7.5z"/></svg>
+                  CONNECT PEER CODE
+                </button>
+              </div>
+
+              <div class="contacts-list" id="contacts-list-container">
+                <!-- Dynamically rendered contacts -->
+              </div>
+            </aside>
+
+            <!-- Active Chat Transcript Area -->
+            <div class="chat-main-area">
+              <div class="chat-header" id="active-chat-header" style="display:none;">
+                <div class="chat-peer-info">
+                  <div class="peer-avatar-tag" id="active-peer-avatar">AG</div>
+                  <div class="peer-details-col">
+                    <span class="peer-name-text" id="active-peer-name">--</span>
+                    <span class="chat-sec-badge" id="active-peer-status">LINK ESTABLISHED</span>
+                  </div>
+                </div>
+                <div class="chat-header-right">
+                  <div class="timer-pill" id="active-peer-timer">5H REMAINING: --:--:--</div>
+                </div>
+              </div>
+
+              <div class="messages-stream" id="messages-container">
+                <div class="empty-chat-state" id="empty-chat-placeholder">
+                  <svg class="empty-chat-icon" viewBox="0 0 24 24" fill="none" stroke-width="1.5">
+                    <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                    <line x1="8" y1="21" x2="16" y2="21"/>
+                    <line x1="12" y1="17" x2="12" y2="21"/>
+                  </svg>
+                  <p>NO ACTIVE COMMS CHANNEL</p>
+                  <p style="font-size:12px; margin-top:6px;">Select a subject or enter a private access code to begin a 5-hour transmission.</p>
+                </div>
+              </div>
+
+              <!-- Typing Indicator Bar -->
+              <div class="typing-bar" id="chat-typing-indicator" style="display:none;">
+                <span id="typing-agent-name">SUBJECT</span> IS TRANSMITTING
+                <div class="typing-dots">
+                  <div class="typing-dot"></div>
+                  <div class="typing-dot"></div>
+                  <div class="typing-dot"></div>
+                </div>
+              </div>
+
+              <!-- Chat Input Bar -->
+              <div class="chat-input-bar" id="chat-input-panel" style="display:none;">
+                <input type="file" id="file-upload-input" style="display:none;">
+                <button class="input-action-btn" id="btn-attach-file" title="Send Encrypted File">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+                </button>
+                <button class="input-action-btn" id="btn-record-audio" title="Record Tactical Audio Transmission">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+                </button>
+                <input type="text" class="chat-text-input" id="chat-msg-input" placeholder="Type transmission..." autocomplete="off">
+                <button class="btn-send-msg" id="btn-send-message">TRANSMIT</button>
+              </div>
+
+              <!-- Chat Window Expired Banner -->
+              <div class="chat-locked-banner" id="chat-expired-banner" style="display:none;">
+                <div>[!] 5-HOUR TRANSMISSION WINDOW EXPIRED. Subject code re-entry required.</div>
+                <button class="btn-fdi-primary" id="btn-reopen-code" style="padding:4px 10px; font-size:11px;">ENTER CODE</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 2. MODULE: TERMINAL (Level S Exclusive) -->
+        <section id="module-terminal" class="workspace-module" style="display:none; height:100%;">
+          <div class="window-header">
+            <span>FDI ROOT OPERATOR TERMINAL // LEVEL S CONSOLE</span>
+            <span style="font-size:11px; color:var(--fdi-amber);">AUTHORIZATION: UNRESTRICTED</span>
+          </div>
+          <div class="terminal-module">
+            <div class="term-screen" id="term-output-area"></div>
+            <div class="term-input-row">
+              <span class="term-prompt">FDI-OPERATOR:~$</span>
+              <input type="text" class="term-input-field" id="term-cli-input" autocomplete="off" spellcheck="false">
+            </div>
+          </div>
+        </section>
+
+        <!-- 3. MODULE: DATABASE (Level S Exclusive) -->
+        <section id="module-database" class="workspace-module" style="display:none; height:100%;">
+          <div class="window-header">
+            <span>FEDERAL DEPARTMENT OF INVESTIGATION // SUBJECT DOSSIERS</span>
+            <span style="font-size:11px; color:var(--fdi-green);">CLASSIFIED LEVEL S</span>
+          </div>
+          <div class="database-module">
+            <div class="db-toolbar">
+              <input type="text" class="db-search-input" id="db-search-field" placeholder="Search subject name / code / ID...">
+              <button class="btn-retro-sm" id="btn-refresh-db">REFRESH DATABASE</button>
+            </div>
+            <div class="db-table-container">
+              <table class="retro-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>USERNAME</th>
+                    <th>CLEARANCE</th>
+                    <th>ACCESS CODE</th>
+                    <th>STATUS</th>
+                    <th>TRAFFIC</th>
+                    <th>DISCOVERED</th>
+                    <th>ACTIONS</th>
+                  </tr>
+                </thead>
+                <tbody id="db-users-table-body">
+                  <!-- User rows -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- 4. MODULE: INTERCEPT (Level S Exclusive) -->
+        <section id="module-intercept" class="workspace-module" style="display:none; height:100%;">
+          <div class="window-header">
+            <span>SIGNAL INTERCEPT & WIRETAP // NETWORK SURVEILLANCE</span>
+            <span style="font-size:11px; color:var(--fdi-red);">LIVE INTERCEPT ACTIVE</span>
+          </div>
+          <div class="intercept-module">
+            <aside class="intercept-sidebar">
+              <div style="padding:10px 14px; border-bottom:1px solid var(--border-bright); font-weight:700; color:var(--fdi-amber);">
+                INTERCEPTED CHANNELS
+              </div>
+              <div id="intercept-pairs-list" style="overflow-y:auto; flex:1;">
+                <!-- Pairs -->
+              </div>
+            </aside>
+            <div class="intercept-feed-area">
+              <div style="padding:8px 16px; background:#070c09; border-bottom:1px solid var(--border-dim); display:flex; justify-content:space-between; font-size:12px;">
+                <span id="intercept-active-title">LIVE WIRETAP STREAM</span>
+                <span style="color:var(--fdi-green);">ALL COMMUNICATIONS INTERCEPTED</span>
+              </div>
+              <div class="intercept-wiretap-stream" id="intercept-messages-stream">
+                <!-- Intercepted messages -->
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 5. MODULE: FILE ANALYZER (Evan Tanner Forensic Tool) -->
+        <section id="module-analyzer" class="workspace-module" style="display:none; height:100%;">
+          <div class="window-header">
+            <span>FILE FORENSIC ANALYZER // PAYLOAD INSPECTION</span>
+            <span style="font-size:11px; color:var(--fdi-cyan);">DIGITAL EVIDENCE UNIT</span>
+          </div>
+          <div class="analyzer-module">
+            <aside class="analyzer-files-list">
+              <div style="padding:10px 14px; border-bottom:1px solid var(--border-bright); font-weight:700; color:var(--text-bright);">
+                EVIDENCE FILES
+              </div>
+              <div id="analyzer-files-container">
+                <!-- Stored files list -->
+              </div>
+            </aside>
+            <div class="analyzer-report-view" id="analyzer-report-container">
+              <div class="empty-chat-state" style="margin:auto;">
+                <p>SELECT EVIDENCE FILE TO ANALYZE</p>
+                <p style="font-size:12px; margin-top:6px;">Calculates Shannon entropy, file signatures, magic byte headers, metadata, strings, and hex disassembly.</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 6. MODULE: AUDIO ANALYZER -->
+        <section id="module-audio" class="workspace-module" style="display:none; height:100%;">
+          <div class="window-header">
+            <span>AUDIO SPECTRUM & OSCILLOSCOPE ANALYZER</span>
+            <span style="font-size:11px; color:var(--fdi-green);">VOICE RECOGNITION UNIT</span>
+          </div>
+          <div class="audio-analyzer-module">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <div>Select an intercepted voice note or test live microphone waveform:</div>
+              <button class="btn-retro-sm" id="btn-toggle-mic-viz">START MIC TEST</button>
+            </div>
+            <canvas id="audio-viz-canvas" class="waveform-canvas" width="800" height="200"></canvas>
+            <div style="display:flex; gap:16px; font-size:12px; color:var(--text-dim);">
+              <span>FREQUENCY: 20 Hz - 20 kHz</span>
+              <span>SAMPLING: 44.1 kHz PCM</span>
+              <span>FFT SIZE: 2048</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- 7. MODULE: DECRYPTOR -->
+        <section id="module-decryptor" class="workspace-module" style="display:none; height:100%;">
+          <div class="window-header">
+            <span>AUTOMATED DECRYPTION MATRIX // AES CIPHER BREAKER</span>
+            <span style="font-size:11px; color:var(--fdi-green);">QUANTUM ACCELERATOR</span>
+          </div>
+          <div class="decryptor-module">
+            <div class="matrix-stream" id="decryptor-matrix-box">
+              0x7F45 0x4C46 0x0201 0x0100 :: READY
+            </div>
+            <button class="btn-fdi-primary" id="btn-run-decryption-demo">INITIALIZE CIPHER SCAN</button>
+          </div>
+        </section>
+
+        <!-- 8. MODULE: MONITOR -->
+        <section id="module-monitor" class="workspace-module" style="display:none; height:100%;">
+          <div class="window-header">
+            <span>NETWORK RADAR & LIVE SECURITY AUDIT LOG</span>
+            <span style="font-size:11px; color:var(--fdi-green);">SYSTEM TELEMETRY</span>
+          </div>
+          <div class="monitor-module">
+            <div class="report-grid">
+              <div class="report-card">
+                <div class="report-card-title">DISCOVERED SUBJECTS</div>
+                <div class="report-card-val" id="mon-stat-users">0</div>
+              </div>
+              <div class="report-card">
+                <div class="report-card-title">ONLINE NETWORK NODES</div>
+                <div class="report-card-val" id="mon-stat-online">0</div>
+              </div>
+              <div class="report-card">
+                <div class="report-card-title">INTERCEPTED TRANSMISSIONS</div>
+                <div class="report-card-val" id="mon-stat-msgs">0</div>
+              </div>
+              <div class="report-card">
+                <div class="report-card-title">ACTIVE 5-HOUR WINDOWS</div>
+                <div class="report-card-val" id="mon-stat-grants">0</div>
+              </div>
+            </div>
+            <div style="font-weight:700; color:var(--fdi-amber); margin-top:8px;">REAL-TIME SYSTEM AUDIT LOG</div>
+            <div class="hex-dump-box" id="mon-logs-feed" style="max-height:350px;"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <!-- AUTH MODAL (Login & Register) -->
+  <div class="modal-overlay" id="modal-auth" style="display:none;">
+    <div class="fdi-modal-dialog">
+      <div class="modal-header">
+        <span>FEDERAL DEPARTMENT OF INVESTIGATION // TERMINAL AUTH</span>
+      </div>
+      <div class="modal-body">
+        <div style="font-size:12px; color:var(--text-dim);">
+          Enter subject identifier credentials to initialize transmission link.
+        </div>
+        <div class="fdi-input-group">
+          <label class="fdi-input-label">USERNAME</label>
+          <input type="text" class="fdi-text-input" id="auth-username" autocomplete="off" placeholder="e.g. TANNER or WALKER">
+        </div>
+        <div class="fdi-input-group">
+          <label class="fdi-input-label">PASSWORD</label>
+          <input type="password" class="fdi-text-input" id="auth-password" placeholder="••••••••">
+        </div>
+
+        <!-- Official discreet government security notice -->
+        <div class="official-security-notice">
+          NOTICE: Komunikasi pada terminal ini dapat diawasi oleh administrator sistem.
+        </div>
+
+        <div class="modal-actions">
+          <button class="btn-fdi-secondary" id="btn-switch-register">REGISTER NEW SUBJECT</button>
+          <button class="btn-fdi-primary" id="btn-submit-login">AUTHENTICATE</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ENTER ACCESS CODE MODAL (5-Hour Window Unlock) -->
+  <div class="modal-overlay" id="modal-access-code" style="display:none;">
+    <div class="fdi-modal-dialog">
+      <div class="modal-header">
+        <span>ENTER SUBJECT ACCESS CODE</span>
+        <button class="win-btn" id="btn-close-code-modal">X</button>
+      </div>
+      <div class="modal-body">
+        <div style="font-size:12px; color:var(--text-dim);">
+          Entering a valid subject access code unlocks a direct bilateral encrypted comms window for exactly <strong>5 HOURS</strong>.
+        </div>
+        <div class="fdi-input-group">
+          <label class="fdi-input-label">12-CHARACTER ACCESS CODE</label>
+          <input type="text" class="fdi-text-input" id="input-access-code" placeholder="XXXX-XXXX-XXXX" maxlength="14" style="text-transform:uppercase; font-size:18px; letter-spacing:3px; text-align:center;">
+        </div>
+        <div class="modal-actions">
+          <button class="btn-fdi-secondary" id="btn-cancel-code-modal">CANCEL</button>
+          <button class="btn-fdi-primary" id="btn-submit-access-code">ESTABLISH LINK</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Stack -->
+  <div id="toast-container"></div>
+
+  <!-- Client Scripts -->
+  <script src="js/audio.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
