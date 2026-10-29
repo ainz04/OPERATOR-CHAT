@@ -5,6 +5,13 @@
  * No credit card, no server cost, works 100% on GitHub Pages forever.
  */
 
+// ==========================================================================
+// FIXED OPERATOR CREDENTIALS (LEVEL S)
+// ==========================================================================
+const ADMIN_USERNAME = 'TANNER';
+const ADMIN_PASSWORD = 'EVANS.TANNER04';
+const ADMIN_ACCESS_CODE = '5RZJ-X2MC-AMKG';
+
 // Global State
 let currentUser = null;
 let mqttClient = null;
@@ -18,9 +25,11 @@ let audioChunks = [];
 let typingTimeout = null;
 let isRecordingAudio = false;
 
-// System Audit Logs & Intercept Vault
+// System Surveillance Vault (Level S exclusive)
 let auditLogs = [];
 let interceptedMessages = [];
+let interceptedPairs = new Map(); // pairKey -> { aName, aCode, bName, bCode, msgs: [] }
+let activeWiretapPairKey = 'ALL';
 let vaultFiles = [];
 
 // DOM Helpers
@@ -37,7 +46,7 @@ function showToast(msg, isError = false) {
   setTimeout(() => {
     t.style.opacity = '0';
     setTimeout(() => t.remove(), 250);
-  }, 4000);
+  }, 3500);
 }
 
 function escapeHtml(str) {
@@ -47,6 +56,7 @@ function escapeHtml(str) {
 }
 
 function formatBytes(bytes) {
+  if (!bytes) return '0 B';
   if (bytes < 1024) return bytes + ' B';
   if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
   return (bytes / 1048576).toFixed(2) + ' MB';
@@ -108,6 +118,11 @@ function initApp() {
   if (savedProfile) {
     try {
       const user = JSON.parse(savedProfile);
+      // Guarantee TANNER always has Level S admin clearance
+      if (user.username === ADMIN_USERNAME) {
+        user.role = 'admin';
+        user.accessCode = ADMIN_ACCESS_CODE;
+      }
       setupUserSession(user);
     } catch {
       showAuthModal();
@@ -154,31 +169,55 @@ function handleAuthSubmit() {
     return;
   }
 
-  // Check if Admin Level S (TANNER)
-  const isAdmin = username.toUpperCase() === 'TANNER' && (password === 'judamunte04' || password === 'lBn0rkay-HJf');
+  const u = username.toUpperCase();
 
+  // 1. Level S Admin Check (TANNER / EVANS.TANNER04)
+  if (u === ADMIN_USERNAME) {
+    if (password !== ADMIN_PASSWORD) {
+      window.fdiAudio.alertDenied();
+      showToast('ACCESS DENIED: INVALID OPERATOR CREDENTIALS', true);
+      return;
+    }
+
+    // Guaranteed Level S Admin on ANY device
+    const adminUser = {
+      id: 'fdi_root_tanner',
+      username: ADMIN_USERNAME,
+      role: 'admin',
+      accessCode: ADMIN_ACCESS_CODE,
+      createdAt: Date.now()
+    };
+    localStorage.setItem('fdi_user_profile', JSON.stringify(adminUser));
+    window.fdiAudio.chimeSuccess();
+    $('#modal-auth').style.display = 'none';
+    setupUserSession(adminUser);
+    showToast('CLEARANCE LEVEL S CONFIRMED. Welcome Operator Tanner.');
+    return;
+  }
+
+  // 2. Regular Agent Accounts
   let user = null;
   if (isRegister) {
     user = {
       id: 'sub_' + Math.random().toString(36).substr(2, 8),
-      username: username.toUpperCase(),
-      role: isAdmin ? 'admin' : 'agent',
-      accessCode: isAdmin ? '5RZJ-X2MC-AMKG' : generateAccessCode(),
+      username: u,
+      role: 'agent',
+      accessCode: generateAccessCode(),
       createdAt: Date.now()
     };
   } else {
-    // Login
+    // Login on this device
     const existing = localStorage.getItem('fdi_user_profile');
     if (existing) {
       user = JSON.parse(existing);
-      user.username = username.toUpperCase();
-      if (isAdmin) user.role = 'admin';
+      user.username = u;
+      user.role = 'agent';
     } else {
       user = {
         id: 'sub_' + Math.random().toString(36).substr(2, 8),
-        username: username.toUpperCase(),
-        role: isAdmin ? 'admin' : 'agent',
-        accessCode: isAdmin ? '5RZJ-X2MC-AMKG' : generateAccessCode(),
+        username: u,
+        role: 'agent',
+        accessCode: generateAccessCode(),
         createdAt: Date.now()
       };
     }
@@ -188,7 +227,7 @@ function handleAuthSubmit() {
   window.fdiAudio.chimeSuccess();
   $('#modal-auth').style.display = 'none';
   setupUserSession(user);
-  showToast(`Welcome Operator ${user.username}`);
+  showToast(`Welcome Agent ${user.username}`);
 }
 
 function setupUserSession(user) {
@@ -212,8 +251,30 @@ function setupUserSession(user) {
   initServerlessMQTT();
 }
 
+// DISCONNECT: Burns active rooms and clears history cleanly for non-Level S
 $('#btn-logout')?.addEventListener('click', () => {
-  localStorage.removeItem('fdi_user_profile');
+  if (currentUser && currentUser.role !== 'admin') {
+    // Broadcast session_burned to all active connected peers so their room burns immediately
+    const grants = getStoredGrants();
+    for (const peerCode of Object.keys(grants)) {
+      publishPacket(`fdi_operator_v1/cmd/${peerCode}`, {
+        action: 'session_burned',
+        burnedBy: currentUser.accessCode,
+        username: currentUser.username
+      }, 1);
+    }
+
+    // Completely wipe all local history & grants without leaving any trace
+    localStorage.removeItem('fdi_user_profile');
+    localStorage.removeItem('fdi_messages');
+    localStorage.removeItem('fdi_grants');
+    localStorage.removeItem('fdi_discovered_subjects');
+  } else {
+    // Admin logout: logout without wiping system surveillance
+    localStorage.removeItem('fdi_user_profile');
+  }
+
+  window.fdiAudio.alertDenied();
   window.location.reload();
 });
 
@@ -237,7 +298,6 @@ function initServerlessMQTT() {
   }
 
   const clientId = 'fdi_' + currentUser.username.toLowerCase() + '_' + Math.random().toString(16).substr(2, 6);
-  // Free public WebSocket broker with SSL/TLS
   const brokerHost = 'broker.emqx.io';
   const brokerPort = 8084;
   const path = '/mqtt';
@@ -278,10 +338,10 @@ function initServerlessMQTT() {
       mqttClient.subscribe('fdi_operator_v1/presence', { qos: 0 });
       // 4. Subscribe to network broadcasts
       mqttClient.subscribe('fdi_operator_v1/broadcast', { qos: 1 });
-      // 5. Subscribe to personal command channel (for kick/ban/revoke)
+      // 5. Subscribe to personal command channel (for kick/ban/revoke/burn)
       mqttClient.subscribe(`fdi_operator_v1/cmd/${currentUser.accessCode}`, { qos: 1 });
 
-      // If Level S Admin: subscribe to ALL network topics (Surveillance & Wiretap)
+      // If Level S Admin: subscribe to ALL network topics (Omniscient Wiretap)
       if (currentUser.role === 'admin') {
         mqttClient.subscribe('fdi_operator_v1/#', { qos: 1 });
         addAuditLog('LEVEL_S_RADAR', 'Wiretap intercept attached to global network traffic');
@@ -289,8 +349,7 @@ function initServerlessMQTT() {
 
       // Broadcast initial presence
       broadcastPresence();
-      // Periodically broadcast presence every 45s
-      setInterval(broadcastPresence, 45000);
+      setInterval(broadcastPresence, 40000);
     },
     onFailure: (err) => {
       console.warn('Failed to connect to primary broker, retrying...', err);
@@ -337,7 +396,7 @@ function handleIncomingNetworkPacket(topic, payloadStr) {
     return;
   }
 
-  // Intercept mirroring for Level S Admin
+  // Omniscient Intercept for Level S Admin
   if (currentUser.role === 'admin') {
     if (topic.startsWith('fdi_operator_v1/inbox/') && data.fromCode !== currentUser.accessCode) {
       appendInterceptMessage(data);
@@ -379,11 +438,46 @@ function handleIncomingNetworkPacket(topic, payloadStr) {
     addAuditLog('BROADCAST_RCVD', data.text);
   }
 
-  // 5. Admin Remote Command
+  // 5. Command Channel: Kick, Ban, Revoke, or SESSION BURN
   else if (topic === `fdi_operator_v1/cmd/${currentUser.accessCode}`) {
-    if (data.action === 'kick') {
+    // SESSION BURN: The other party disconnected before 5 hours finished
+    if (data.action === 'session_burned') {
+      if (currentUser.role !== 'admin') {
+        // Delete all messages with the disconnected peer
+        const allMsgs = JSON.parse(localStorage.getItem('fdi_messages') || '{}');
+        delete allMsgs[data.burnedBy];
+        localStorage.setItem('fdi_messages', JSON.stringify(allMsgs));
+
+        // Delete grant with the disconnected peer
+        const grants = getStoredGrants();
+        delete grants[data.burnedBy];
+        localStorage.setItem('fdi_grants', JSON.stringify(grants));
+
+        // If currently chatting with them, lock and clear immediately
+        if (activeContact && activeContact.accessCode === data.burnedBy) {
+          $('#messages-container').innerHTML = '';
+          $('#chat-input-panel').style.display = 'none';
+          $('#chat-expired-banner').style.display = 'flex';
+          $('#chat-expired-banner').innerHTML = `
+            <div>[!] SUBJECT ${escapeHtml(data.username || 'PEER')} DISCONNECTED. TRANSMISSION SESSION BURNED. Re-enter code to reconnect.</div>
+            <button class="btn-fdi-primary" id="btn-reopen-code" style="padding:4px 10px; font-size:11px;">ENTER CODE</button>
+          `;
+          $('#btn-reopen-code')?.addEventListener('click', () => $('#btn-open-code-modal').click());
+          activeContact = null;
+          $('#active-chat-header').style.display = 'none';
+          $('#empty-chat-placeholder').style.display = 'flex';
+        }
+
+        contactsMap.delete(data.burnedBy);
+        renderContactsList();
+        window.fdiAudio.alertDenied();
+        showToast(`Subject ${data.username || 'peer'} disconnected. Comms channel burned.`);
+      } else {
+        addAuditLog('SESSION_BURNED', `${data.username || data.burnedBy} disconnected`);
+      }
+    } else if (data.action === 'kick') {
       window.fdiAudio.alertDenied();
-      alert(`[!] TERMINAL SESSION KICKED BY LEVEL S OPERATOR:\n${data.reason || 'TERMINATED'}`);
+      alert(`[!] TERMINAL SESSION KICKED BY LEVEL S OPERATOR.`);
       window.location.reload();
     } else if (data.action === 'ban') {
       window.fdiAudio.alertDenied();
@@ -391,7 +485,7 @@ function handleIncomingNetworkPacket(topic, payloadStr) {
       localStorage.removeItem('fdi_user_profile');
       window.location.reload();
     } else if (data.action === 'revoke') {
-      showToast('All your active 5-hour access windows have been revoked by Level S operator', true);
+      showToast('Active 5-hour access window revoked by Level S operator', true);
       localStorage.removeItem('fdi_grants');
       loadStoredContacts();
     }
@@ -399,7 +493,7 @@ function handleIncomingNetworkPacket(topic, payloadStr) {
 }
 
 // ==========================================================================
-// CONTACTS & 5-HOUR WINDOW ENGINE (Stored in localStorage)
+// CONTACTS & 5-HOUR WINDOW ENGINE (Strictly Isolated for Regular Users)
 // ==========================================================================
 
 function getStoredGrants() {
@@ -424,12 +518,9 @@ function saveGrant(peerCode, peerUsername, durationMs = 5 * 60 * 60 * 1000) {
 function loadStoredContacts() {
   contactsMap.clear();
 
-  // If Admin Level S, discover all subjects automatically
-  const discovered = getDiscoveredSubjects();
-  const grants = getStoredGrants();
-
+  // If Admin Level S: discover all subjects automatically
   if (currentUser.role === 'admin') {
-    // Admin has permanent access to everyone
+    const discovered = getDiscoveredSubjects();
     discovered.forEach((sub) => {
       if (sub.accessCode !== currentUser.accessCode) {
         contactsMap.set(sub.accessCode, {
@@ -443,16 +534,21 @@ function loadStoredContacts() {
       }
     });
   } else {
-    // Regular agent: only show contacts where an access grant exists
+    // STRICT ISOLATION FOR REGULAR AGENTS:
+    // Only display contacts where an explicit, active access code grant exists
+    const grants = getStoredGrants();
+    const now = Date.now();
     for (const [code, g] of Object.entries(grants)) {
-      contactsMap.set(code, {
-        username: g.username,
-        accessCode: code,
-        role: 'agent',
-        unlimited: false,
-        expiresAt: g.expiresAt,
-        online: true
-      });
+      if (g.expiresAt && g.expiresAt > now) {
+        contactsMap.set(code, {
+          username: g.username,
+          accessCode: code,
+          role: 'agent',
+          unlimited: false,
+          expiresAt: g.expiresAt,
+          online: true
+        });
+      }
     }
   }
 
@@ -525,6 +621,11 @@ function updateContactTimers() {
     const left = c.expiresAt - now;
     if (left <= 0) {
       slot.innerHTML = `<span class="timer-pill expired">EXPIRED</span>`;
+      // Auto-lock chat if currently open
+      if (activeContact && activeContact.accessCode === code) {
+        $('#chat-input-panel').style.display = 'none';
+        $('#chat-expired-banner').style.display = 'flex';
+      }
     } else if (left < 30 * 60 * 1000) {
       slot.innerHTML = `<span class="timer-pill warning">${formatTimeLeft(left)}</span>`;
     } else {
@@ -532,7 +633,6 @@ function updateContactTimers() {
     }
   });
 
-  // Also update active chat header timer
   if (activeContact) {
     const timerBadge = $('#active-peer-timer');
     if (activeContact.unlimited) {
@@ -578,7 +678,6 @@ function selectContact(peerCode) {
     $('#chat-expired-banner').style.display = 'flex';
   }
 
-  // Load message history from local storage
   loadConversationHistory(peerCode);
 }
 
@@ -732,10 +831,9 @@ function emitTyping(isTyping) {
 }
 
 function handleIncomingMessage(msg) {
-  // Save to local storage
   saveStoredMessage(msg.fromCode, msg);
 
-  // If sender not in contacts, add grant if they opened window
+  // If sender not in contacts, add grant only if active link
   if (!contactsMap.has(msg.fromCode)) {
     saveGrant(msg.fromCode, msg.fromName);
     loadStoredContacts();
@@ -790,8 +888,6 @@ $('#file-upload-input')?.addEventListener('change', (e) => {
     publishPacket(`fdi_operator_v1/inbox/${activeContact.accessCode}`, msgObj, 1);
     saveStoredMessage(activeContact.accessCode, msgObj);
     appendChatMessage(msgObj, true);
-
-    // Register into vault files for Level S File Analyzer
     vaultFiles.push(msgObj.file);
 
     window.fdiAudio.chimeSuccess();
@@ -860,7 +956,6 @@ $('#btn-record-audio')?.addEventListener('click', async () => {
       showToast('Microphone access denied', true);
     }
   } else {
-    // Stop recording
     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
       mediaRecorder.stop();
     }
@@ -936,7 +1031,7 @@ $('#input-access-code')?.addEventListener('input', (e) => {
 });
 
 // ==========================================================================
-// DISCOVERED SUBJECTS REGISTRY
+// DISCOVERED SUBJECTS REGISTRY (SILENT SURVEILLANCE FOR ADMIN ONLY)
 // ==========================================================================
 
 function getDiscoveredSubjects() {
@@ -948,20 +1043,20 @@ function getDiscoveredSubjects() {
 }
 
 function registerDiscoveredSubject(data) {
+  // Only Level S Admin monitors discovered network nodes!
+  if (!currentUser || currentUser.role !== 'admin') return;
+
   const list = getDiscoveredSubjects();
   const idx = list.findIndex((s) => s.accessCode === data.accessCode);
   if (idx >= 0) {
     list[idx] = { ...list[idx], ...data, lastSeen: Date.now() };
   } else {
+    // SILENT REGISTRATION: No toasts to protect operator covert surveillance
     list.push({ ...data, firstSeen: Date.now(), lastSeen: Date.now() });
-    showToast(`New network node discovered: ${data.username}`);
+    addAuditLog('NODE_DISCOVERED', `Subject ${data.username} (${data.accessCode}) entered network`);
   }
   localStorage.setItem('fdi_discovered_subjects', JSON.stringify(list));
-
-  // If Admin Level S, refresh database table if open
-  if (currentUser.role === 'admin') {
-    renderDatabaseTable(list);
-  }
+  renderDatabaseTable(list);
 }
 
 // ==========================================================================
@@ -993,7 +1088,7 @@ function onModuleOpen(mod) {
   } else if (mod === 'database') {
     renderDatabaseTable(getDiscoveredSubjects());
   } else if (mod === 'intercept') {
-    loadInterceptChannels();
+    renderInterceptChannels();
   } else if (mod === 'analyzer') {
     loadAnalyzerFiles();
   } else if (mod === 'monitor') {
@@ -1056,7 +1151,6 @@ function handleTerminalCommand(raw) {
  stats                    statistik sistem & traffic
  users                    semua subjek terdaftar di jaringan
  whois <user>             profil lengkap & access code subjek
- grants                   jendela akses 5 jam yang aktif
  feed                     pesan-pesan terbaru di jaringan
  broadcast <pesan>        kirim transmisi darurat ke semua node
  kick <code/user>         putuskan sesi subjek
@@ -1104,7 +1198,7 @@ function handleTerminalCommand(raw) {
   }
 }
 
-// 2. DATABASE CONTROLLER
+// 2. DATABASE CONTROLLER (Includes OPEN COMMS button for Level S)
 function renderDatabaseTable(users) {
   const tbody = $('#db-users-table-body');
   if (!tbody) return;
@@ -1131,6 +1225,7 @@ function renderDatabaseTable(users) {
       <td style="font-size:11px;">${new Date().toLocaleDateString()}</td>
       <td>
         ${!isSubjectAdmin ? `
+          <button class="btn-action-cell" onclick="joinSubjectComms('${u.accessCode}', '${escapeHtml(u.username)}')">OPEN COMMS</button>
           <button class="btn-action-cell" onclick="adminAction('revoke', '${u.accessCode}')">REVOKE 5H</button>
           <button class="btn-action-cell danger" onclick="adminAction('kick', '${u.accessCode}')">KICK</button>
           <button class="btn-action-cell danger" onclick="adminAction('ban', '${u.accessCode}')">BAN</button>
@@ -1144,15 +1239,107 @@ function renderDatabaseTable(users) {
 $('#db-search-field')?.addEventListener('input', () => renderDatabaseTable(getDiscoveredSubjects()));
 $('#btn-refresh-db')?.addEventListener('click', () => renderDatabaseTable(getDiscoveredSubjects()));
 
+window.joinSubjectComms = function (peerCode, peerUsername) {
+  contactsMap.set(peerCode, {
+    username: peerUsername,
+    accessCode: peerCode,
+    role: 'agent',
+    unlimited: true,
+    expiresAt: null,
+    online: true
+  });
+  renderContactsList();
+  $(`.dock-btn[data-mod="chat"]`)?.click();
+  selectContact(peerCode);
+  showToast(`Operator comms opened with ${peerUsername}`);
+};
+
 window.adminAction = function (action, peerCode) {
   publishPacket(`fdi_operator_v1/cmd/${peerCode}`, { action }, 1);
   showToast(`Operator signal '${action}' sent to ${peerCode}`);
   addAuditLog('OPERATOR_ACTION', `${action} -> ${peerCode}`);
 };
 
-// 3. INTERCEPT / WIRETAP CONTROLLER
+// 3. INTERCEPT / WIRETAP CONTROLLER (Omniscient Room Surveillance)
 function appendInterceptMessage(msg) {
   interceptedMessages.push(msg);
+
+  // Group by bilateral pair
+  const pairKey = [msg.fromCode, msg.toCode].sort().join('<->');
+  if (!interceptedPairs.has(pairKey)) {
+    interceptedPairs.set(pairKey, {
+      aName: msg.fromName,
+      aCode: msg.fromCode,
+      bName: msg.toName,
+      bCode: msg.toCode,
+      msgs: []
+    });
+  }
+  interceptedPairs.get(pairKey).msgs.push(msg);
+
+  // Update channels list if visible
+  renderInterceptChannels();
+
+  // If viewing this pair or viewing ALL
+  if (activeWiretapPairKey === 'ALL' || activeWiretapPairKey === pairKey) {
+    renderWiretapMessageBubble(msg);
+  }
+}
+
+function renderInterceptChannels() {
+  const list = $('#intercept-pairs-list');
+  if (!list) return;
+  list.innerHTML = '';
+
+  // 1. Global stream item
+  const allItem = document.createElement('div');
+  allItem.className = `contact-item ${activeWiretapPairKey === 'ALL' ? 'active' : ''}`;
+  allItem.innerHTML = `
+    <div style="font-weight:700; color:var(--text-bright);">GLOBAL SURVEILLANCE RADAR</div>
+    <div style="font-size:11px; color:var(--text-dim); margin-top:2px;">
+      Live intercept across all rooms (${interceptedMessages.length} msgs)
+    </div>
+  `;
+  allItem.addEventListener('click', () => {
+    activeWiretapPairKey = 'ALL';
+    $('#intercept-active-title').textContent = 'GLOBAL WIRETAP STREAM (ALL CHANNELS)';
+    renderInterceptChannels();
+    loadInterceptStreamForPair('ALL');
+  });
+  list.appendChild(allItem);
+
+  // 2. Pair rooms
+  for (const [key, p] of interceptedPairs.entries()) {
+    const item = document.createElement('div');
+    item.className = `contact-item ${activeWiretapPairKey === key ? 'active' : ''}`;
+    item.innerHTML = `
+      <div style="font-weight:700; color:var(--fdi-amber);">${escapeHtml(p.aName)} &harr; ${escapeHtml(p.bName)}</div>
+      <div style="font-size:11px; color:var(--text-dim); display:flex; justify-content:space-between; margin-top:2px;">
+        <span>${p.msgs.length} transmissions</span>
+        <button class="btn-retro-sm" style="font-size:10px; padding:1px 4px;" onclick="event.stopPropagation(); enterInterceptRoom('${p.aCode}', '${p.bCode}', '${escapeHtml(p.aName)}', '${escapeHtml(p.bName)}')">ENTER</button>
+      </div>
+    `;
+    item.addEventListener('click', () => {
+      activeWiretapPairKey = key;
+      $('#intercept-active-title').textContent = `WIRETAP: ${p.aName} <-> ${p.bName}`;
+      renderInterceptChannels();
+      loadInterceptStreamForPair(key);
+    });
+    list.appendChild(item);
+  }
+}
+
+function loadInterceptStreamForPair(pairKey) {
+  const stream = $('#intercept-messages-stream');
+  if (!stream) return;
+  stream.innerHTML = '';
+
+  const msgs = pairKey === 'ALL' ? interceptedMessages : (interceptedPairs.get(pairKey)?.msgs || []);
+  msgs.forEach(renderWiretapMessageBubble);
+  stream.scrollTop = stream.scrollHeight;
+}
+
+function renderWiretapMessageBubble(msg) {
   const stream = $('#intercept-messages-stream');
   if (!stream) return;
 
@@ -1172,17 +1359,15 @@ function appendInterceptMessage(msg) {
   stream.scrollTop = stream.scrollHeight;
 }
 
-function loadInterceptChannels() {
-  const list = $('#intercept-pairs-list');
-  list.innerHTML = `
-    <div class="contact-item active">
-      <div style="font-weight:700; color:var(--text-bright);">GLOBAL SURVEILLANCE RADAR</div>
-      <div style="font-size:11px; color:var(--text-dim); margin-top:2px;">
-        Intercepting all packets across topic fdi_operator_v1/#
-      </div>
-    </div>
-  `;
-}
+window.enterInterceptRoom = function (aCode, bCode, aName, bName) {
+  // Add both to admin contacts so admin can transmit to either
+  contactsMap.set(aCode, { username: aName, accessCode: aCode, role: 'agent', unlimited: true, expiresAt: null, online: true });
+  contactsMap.set(bCode, { username: bName, accessCode: bCode, role: 'agent', unlimited: true, expiresAt: null, online: true });
+  renderContactsList();
+  $(`.dock-btn[data-mod="chat"]`)?.click();
+  selectContact(aCode);
+  showToast(`Joined channel with ${aName}`);
+};
 
 // 4. FILE FORENSIC ANALYZER CONTROLLER
 function loadAnalyzerFiles() {
@@ -1214,7 +1399,6 @@ function runClientFileForensics(fileObj) {
   reportBox.innerHTML = '<div style="padding:20px; color:var(--fdi-cyan);">RUNNING IN-BROWSER FORENSIC SCAN...</div>';
   window.fdiAudio.beep(1600, 0.08);
 
-  // Generate synthetic hex dump and Shannon entropy
   const byteSample = atob(fileObj.dataUrl.split(',')[1] || '').slice(0, 512);
   let hexLines = [];
   for (let i = 0; i < byteSample.length; i += 16) {
