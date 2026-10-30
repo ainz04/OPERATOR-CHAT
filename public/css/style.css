@@ -260,11 +260,23 @@ body {
   background: var(--bg-panel);
   border: 1px solid var(--border-dim);
   overflow: hidden;
+  width: 100%;
   height: 100%;
 }
 
+.workspace-module {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  flex: 1;
+  overflow: hidden;
+}
+
 .window-header {
+  width: 100%;
   height: 34px;
+  flex-shrink: 0;
   background: linear-gradient(90deg, #0d1c14 0%, #080f0b 100%);
   border-bottom: 1px solid var(--border-bright);
   display: flex;
@@ -784,6 +796,8 @@ body {
   display: flex;
   flex-direction: column;
   flex: 1;
+  width: 100%;
+  height: calc(100% - 34px);
   background: #040806;
   padding: 14px;
   font-family: var(--font-mono);
@@ -831,6 +845,8 @@ body {
   display: flex;
   flex-direction: column;
   flex: 1;
+  width: 100%;
+  height: calc(100% - 34px);
   overflow: hidden;
   background: var(--bg-panel);
 }
@@ -910,12 +926,16 @@ body {
 /* 3. INTERCEPT / SURVEILLANCE MODULE */
 .intercept-module {
   display: flex;
+  flex-direction: row;
   flex: 1;
+  width: 100%;
+  height: calc(100% - 34px);
   overflow: hidden;
 }
 
 .intercept-sidebar {
   width: 320px;
+  flex-shrink: 0;
   background: var(--bg-panel-dark);
   border-right: 1px solid var(--border-bright);
   display: flex;
@@ -927,6 +947,7 @@ body {
   display: flex;
   flex-direction: column;
   background: var(--bg-panel);
+  overflow: hidden;
 }
 
 .intercept-wiretap-stream {
@@ -941,12 +962,16 @@ body {
 /* 4. FILE ANALYZER MODULE (Evan Tanner forensic scanner) */
 .analyzer-module {
   display: flex;
+  flex-direction: row;
   flex: 1;
+  width: 100%;
+  height: calc(100% - 34px);
   overflow: hidden;
 }
 
 .analyzer-files-list {
   width: 280px;
+  flex-shrink: 0;
   background: var(--bg-panel-dark);
   border-right: 1px solid var(--border-bright);
   overflow-y: auto;
@@ -1000,15 +1025,19 @@ body {
 /* 5. AUDIO ANALYZER MODULE */
 .audio-analyzer-module {
   flex: 1;
+  width: 100%;
+  height: calc(100% - 34px);
   display: flex;
   flex-direction: column;
   padding: 16px;
   gap: 16px;
+  overflow: hidden;
 }
 
 .waveform-canvas {
   width: 100%;
-  height: 200px;
+  flex: 1;
+  min-height: 200px;
   background: #040806;
   border: 1px solid var(--fdi-green);
   box-shadow: inset 0 0 12px var(--fdi-green-glow);
@@ -1017,6 +1046,8 @@ body {
 /* 6. DECRYPTOR MODULE */
 .decryptor-module {
   flex: 1;
+  width: 100%;
+  height: calc(100% - 34px);
   display: flex;
   flex-direction: column;
   padding: 20px;
@@ -1037,6 +1068,8 @@ body {
 /* 7. MONITOR MODULE */
 .monitor-module {
   flex: 1;
+  width: 100%;
+  height: calc(100% - 34px);
   display: flex;
   flex-direction: column;
   padding: 16px;

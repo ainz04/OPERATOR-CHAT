@@ -32,6 +32,9 @@ let interceptedPairs = new Map(); // pairKey -> { aName, aCode, bName, bCode, ms
 let activeWiretapPairKey = 'ALL';
 let vaultFiles = [];
 let activeNetworkLinks = new Map(); // pairKey -> { key, codeA, nameA, codeB, nameB, establishedAt, lastActivity, msgCount }
+let processedIncomingIds = new Set();
+let processedInterceptIds = new Set();
+let presenceInterval = null;
 
 // DOM Helpers
 const $ = (sel) => document.querySelector(sel);
@@ -352,6 +355,15 @@ function initServerlessMQTT() {
     return;
   }
 
+  if (mqttClient && mqttConnected) {
+    try {
+      mqttClient.disconnect();
+    } catch {
+      // ignore disconnect error
+    }
+    mqttConnected = false;
+  }
+
   const clientId = 'fdi_' + currentUser.username.toLowerCase() + '_' + Math.random().toString(16).substr(2, 6);
   const brokerHost = 'broker.emqx.io';
   const brokerPort = 8084;
@@ -385,30 +397,26 @@ function initServerlessMQTT() {
       $('#top-link-status').style.color = 'var(--fdi-green)';
       addAuditLog('LINK_ESTABLISHED', `Connected to Cloud WSS Node (${brokerHost})`);
 
-      // 1. Subscribe to personal direct inbox
-      mqttClient.subscribe(`fdi_operator_v1/inbox/${currentUser.accessCode}`, { qos: 1 });
-      // 2. Subscribe to typing signals for my code
-      mqttClient.subscribe(`fdi_operator_v1/typing/${currentUser.accessCode}`, { qos: 0 });
-      // 3. Subscribe to public network announcements & presence
-      mqttClient.subscribe('fdi_operator_v1/presence', { qos: 0 });
-      // 4. Subscribe to network broadcasts
-      mqttClient.subscribe('fdi_operator_v1/broadcast', { qos: 1 });
-      // 5. Subscribe to personal command channel (for kick/ban/revoke/burn/nuke)
-      mqttClient.subscribe(`fdi_operator_v1/cmd/${currentUser.accessCode}`, { qos: 1 });
-      // 6. Subscribe to global account purge broadcast channel
-      mqttClient.subscribe('fdi_operator_v1/cmd/purge', { qos: 1 });
-      // 7. Subscribe to real-time bilateral link status channel
-      mqttClient.subscribe('fdi_operator_v1/links', { qos: 1 });
-
-      // If Level S Admin: subscribe to ALL network topics (Omniscient Wiretap)
       if (currentUser.role === 'admin') {
+        // Level S Admin: subscribe ONLY to wildcard 'fdi_operator_v1/#' (which covers inbox, typing, presence, broadcast, cmd, links)
+        // Avoiding duplicate subscriptions prevents the MQTT broker from delivering each packet twice to Admin!
         mqttClient.subscribe('fdi_operator_v1/#', { qos: 1 });
         addAuditLog('LEVEL_S_RADAR', 'Wiretap intercept attached to global network traffic');
+      } else {
+        // Regular Agent: subscribe only to specific authorized channels
+        mqttClient.subscribe(`fdi_operator_v1/inbox/${currentUser.accessCode}`, { qos: 1 });
+        mqttClient.subscribe(`fdi_operator_v1/typing/${currentUser.accessCode}`, { qos: 0 });
+        mqttClient.subscribe('fdi_operator_v1/presence', { qos: 0 });
+        mqttClient.subscribe('fdi_operator_v1/broadcast', { qos: 1 });
+        mqttClient.subscribe(`fdi_operator_v1/cmd/${currentUser.accessCode}`, { qos: 1 });
+        mqttClient.subscribe('fdi_operator_v1/cmd/purge', { qos: 1 });
+        mqttClient.subscribe('fdi_operator_v1/links', { qos: 1 });
       }
 
       // Broadcast initial presence
       broadcastPresence();
-      setInterval(broadcastPresence, 40000);
+      if (presenceInterval) clearInterval(presenceInterval);
+      presenceInterval = setInterval(broadcastPresence, 40000);
     },
     onFailure: (err) => {
       console.warn('Failed to connect to primary broker, retrying...', err);
@@ -742,7 +750,27 @@ function getStoredMessages(peerCode) {
   try {
     const key = getMessagesKey();
     const all = JSON.parse(localStorage.getItem(key) || '{}');
-    return all[peerCode] || [];
+    const rawList = all[peerCode] || [];
+    // Deduplicate any messages with identical ID or identical (fromCode + text + at)
+    const seenIds = new Set();
+    const seenSigs = new Set();
+    const deduped = [];
+    let hadDuplicates = false;
+    for (const m of rawList) {
+      const sig = `${m.fromCode || ''}|${m.text || ''}|${m.at || ''}`;
+      if ((m.id && seenIds.has(m.id)) || seenSigs.has(sig)) {
+        hadDuplicates = true;
+        continue;
+      }
+      if (m.id) seenIds.add(m.id);
+      seenSigs.add(sig);
+      deduped.push(m);
+    }
+    if (hadDuplicates) {
+      all[peerCode] = deduped;
+      localStorage.setItem(key, JSON.stringify(all));
+    }
+    return deduped;
   } catch {
     return [];
   }
@@ -753,10 +781,18 @@ function saveStoredMessage(peerCode, msg) {
     const key = getMessagesKey();
     const all = JSON.parse(localStorage.getItem(key) || '{}');
     if (!all[peerCode]) all[peerCode] = [];
+    // Prevent duplicate messages from ever being saved
+    const isDup = all[peerCode].some((m) =>
+      (msg.id && m.id === msg.id) ||
+      (m.fromCode === msg.fromCode && m.text === msg.text && Math.abs((m.at || 0) - (msg.at || 0)) < 400)
+    );
+    if (isDup) return false;
     all[peerCode].push(msg);
     localStorage.setItem(key, JSON.stringify(all));
+    return true;
   } catch (err) {
     console.error('Failed to save message', err);
+    return false;
   }
 }
 
@@ -870,9 +906,19 @@ function appendChatMessage(msg, autoScroll = true) {
   const container = $('#messages-container');
   if (!container) return;
 
+  // Remove empty thread notice if present
+  const emptyNotice = container.querySelector('.empty-thread-notice');
+  if (emptyNotice) emptyNotice.remove();
+
+  // Prevent rendering duplicate message bubble in DOM
+  if (msg.id && container.querySelector(`[data-msg-id="${msg.id}"]`)) {
+    return;
+  }
+
   const isOut = msg.fromCode === currentUser.accessCode;
   const bubble = document.createElement('div');
   bubble.className = `msg-bubble ${isOut ? 'outgoing' : 'incoming'}`;
+  if (msg.id) bubble.dataset.msgId = msg.id;
 
   const timeStr = new Date(msg.at).toLocaleTimeString('sv-SE');
   let bodyHtml = '';
@@ -929,7 +975,7 @@ function transmitMessage() {
   if (!text) return;
 
   const msgObj = {
-    id: 'msg_' + Date.now(),
+    id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
     fromCode: currentUser.accessCode,
     fromName: currentUser.username,
     toCode: activeContact.accessCode,
@@ -979,13 +1025,31 @@ function emitTyping(isTyping) {
 }
 
 function handleIncomingMessage(msg) {
-  saveStoredMessage(msg.fromCode, msg);
+  if (!msg) return;
+  if (msg.id && processedIncomingIds.has(msg.id)) return;
+  if (msg.id) processedIncomingIds.add(msg.id);
+
+  const isSaved = saveStoredMessage(msg.fromCode, msg);
+  if (!isSaved) return;
+
   recordNetworkLink(msg.fromCode, msg.fromName, msg.toCode || currentUser.accessCode, msg.toName || currentUser.username, false);
 
   // If sender not in contacts, add grant only if active link
   if (!contactsMap.has(msg.fromCode)) {
-    saveGrant(msg.fromCode, msg.fromName);
-    loadStoredContacts();
+    if (currentUser.role === 'admin') {
+      contactsMap.set(msg.fromCode, {
+        username: msg.fromName,
+        accessCode: msg.fromCode,
+        role: 'agent',
+        unlimited: true,
+        expiresAt: null,
+        online: true
+      });
+      renderContactsList();
+    } else {
+      saveGrant(msg.fromCode, msg.fromName);
+      loadStoredContacts();
+    }
   }
 
   // If chat is open with sender
@@ -1234,6 +1298,8 @@ $$('.dock-btn').forEach((btn) => {
     const targetMod = $(`#module-${mod}`);
     if (targetMod) {
       targetMod.style.display = 'flex';
+      targetMod.style.flexDirection = 'column';
+      targetMod.style.width = '100%';
       window.fdiAudio.beep(1100, 0.04);
       onModuleOpen(mod);
     }
@@ -1628,6 +1694,10 @@ window.adminAction = function (action, peerCode) {
 
 // 3. INTERCEPT / WIRETAP CONTROLLER (Omniscient Room Surveillance)
 function appendInterceptMessage(msg) {
+  if (!msg) return;
+  if (msg.id && processedInterceptIds.has(msg.id)) return;
+  if (msg.id) processedInterceptIds.add(msg.id);
+
   interceptedMessages.push(msg);
 
   // Group by bilateral pair
