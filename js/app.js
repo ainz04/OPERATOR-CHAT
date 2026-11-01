@@ -10,6 +10,7 @@
 // Plaintext root credentials and access code are NEVER stored in source code.
 // ==========================================================================
 const _LV_U_HASH = 'fec545932eb7bc1987127659dc576ee2299aa69f87673b30a97e0792fe969b4b';
+const _LV_C_HASH = 'f4800dbd7ee20bb752996e55a20bd1260daccb1f93d48665f001e5edfddb06e6';
 const _LV_AUTH_HASH = 'fb8607a6f6ae64de9087c850f1b52bef530ea1ae0e287f37abe899d5bf3ca563';
 const _LV_SES_HASH = 'd0aa4e81212e5dd50c33638676ef527516a5be188d8ce6dab10025104f4a8709';
 const _LV_VAULT = [38, 62, 75, 34, 122, 216, 45, 41, 57, 144, 160, 34, 164, 159];
@@ -77,7 +78,22 @@ function _sha256Hex(str) {
 }
 
 function isRootSubjectName(u) {
-  return Boolean(u) && _sha256Hex('FDI_B81_USR_SALT_v4::' + u.toUpperCase()) === _LV_U_HASH;
+  return Boolean(u) && _sha256Hex('FDI_B81_USR_SALT_v4::' + String(u).trim().toUpperCase()) === _LV_U_HASH;
+}
+
+function isRootAccessCode(c) {
+  return Boolean(c) && _sha256Hex('FDI_B81_CODE_SALT_v4::' + String(c).trim().toUpperCase()) === _LV_C_HASH;
+}
+
+function isProtectedRootTarget(code, username, role) {
+  if (role === 'admin') return true;
+  if (username && (isRootSubjectName(username) || isRootAccessCode(username))) return true;
+  if (code && (isRootAccessCode(code) || isRootSubjectName(code))) return true;
+  if (currentUser && currentUser.role === 'admin') {
+    if (code && currentUser.accessCode && String(code).toUpperCase() === currentUser.accessCode.toUpperCase()) return true;
+    if (username && currentUser.username && String(username).toUpperCase() === currentUser.username.toUpperCase()) return true;
+  }
+  return false;
 }
 
 function verifyRootCredentials(u, p) {
@@ -344,23 +360,36 @@ function setupUserSession(user) {
   $('#top-username').textContent = user.username;
   $('#my-code-display').textContent = user.accessCode;
 
-  // Level S Admin Indicator & Dock Tools
+  // Level S Admin Indicator, Dock Tools & Permanent Removal of "HAPUS AKUN" Button for Admin
   const adminSlot = $('#admin-indicator-slot');
   const adminTools = $('#admin-dock-tools');
-  if (user.role === 'admin') {
+  const purgeSelfBtn = $('#btn-purge-self');
+  if (user.role === 'admin' || isProtectedRootTarget(user.accessCode, user.username, user.role)) {
+    user.role = 'admin';
     adminSlot.innerHTML = `<span class="level-s-tag">CLEARANCE: LEVEL S</span>`;
     adminTools.style.display = 'flex';
+    // Permanently remove the "HAPUS AKUN" button from the Admin UI so it can never be clicked
+    if (purgeSelfBtn) {
+      purgeSelfBtn.style.display = 'none';
+      purgeSelfBtn.remove();
+    }
   } else {
     adminSlot.innerHTML = `<span style="font-size:11px; color:var(--text-dim);">CLEARANCE: AGENT</span>`;
     adminTools.style.display = 'none';
+    if (purgeSelfBtn) {
+      purgeSelfBtn.style.display = 'inline-flex';
+    }
   }
 
   loadStoredContacts();
   initServerlessMQTT();
 }
 
-// Complete client trace wiper (vaporizes 10000% of all local data without traces)
+// Complete client trace wiper (vaporizes 10000% of all local data without traces — NEVER touches Level S Admin)
 function wipeAllClientTraces() {
+  if (currentUser && isProtectedRootTarget(currentUser.accessCode, currentUser.username, currentUser.role)) {
+    return;
+  }
   const keysToRemove = [];
   for (let i = 0; i < localStorage.length; i++) {
     const k = localStorage.key(i);
@@ -374,7 +403,7 @@ function wipeAllClientTraces() {
 
 // DISCONNECT: Burns active rooms and clears history cleanly for non-Level S
 $('#btn-logout')?.addEventListener('click', () => {
-  if (currentUser && currentUser.role !== 'admin') {
+  if (currentUser && currentUser.role !== 'admin' && !isProtectedRootTarget(currentUser.accessCode, currentUser.username, currentUser.role)) {
     // Broadcast session_burned to all active connected peers so their room burns immediately
     const grants = getStoredGrants();
     for (const peerCode of Object.keys(grants)) {
@@ -401,12 +430,12 @@ $('#btn-logout')?.addEventListener('click', () => {
   window.location.reload();
 });
 
-// HAPUS AKUN SAYA (10000% Self Account Destruction)
+// HAPUS AKUN SAYA (10000% Self Account Destruction - Strictly Disabled for Level S Admin)
 $('#btn-purge-self')?.addEventListener('click', () => {
   if (!currentUser) return;
-  if (currentUser.role === 'admin' || isRootSubjectName(currentUser.username)) {
+  if (isProtectedRootTarget(currentUser.accessCode, currentUser.username, currentUser.role)) {
     window.fdiAudio.alertDenied();
-    showToast('ROOT LEVEL S OPERATOR ACCOUNT IS PROTECTED', true);
+    showToast('AKUN ADMIN LEVEL S TIDAK DAPAT DIHAPUS ATAU DIGANGGU GUGAT!', true);
     return;
   }
   const ok = confirm(`PERINGATAN KRITIS: HAPUS AKUN 10000%?\n\nApakah Anda yakin ingin memusnahkan akun "${currentUser.username}" secara permanen?\nSeluruh riwayat, room, dan kunci enkripsi akan dimusnahkan tanpa meninggalkan jejak sedikitpun!`);
@@ -629,8 +658,17 @@ function handleIncomingNetworkPacket(topic, payloadStr) {
 
   // 6. Global or Targeted Purge Channel (10000% Identity Annihilation)
   else if (topic === 'fdi_operator_v1/cmd/purge' || topic === `fdi_operator_v1/cmd/${currentUser.accessCode}`) {
+    const tCode = data.targetCode || data.accessCode;
+    const tName = data.targetUsername || data.username || 'subjek';
+
+    // ABSOLUTE IMMUTABILITY: Ignore any network packet attempting to target or purge the Root Level S Operator
+    if (isProtectedRootTarget(tCode, tName, data.role)) {
+      addAuditLog('SHIELD_BLOCKED', `Blocked unauthorized network command (${data.action}) targeting Root Level S`);
+      return;
+    }
+
     if (data.action === 'account_nuked' || data.action === 'force_nuke_account') {
-      const isTarget = currentUser && (
+      const isTarget = currentUser && !isProtectedRootTarget(currentUser.accessCode, currentUser.username, currentUser.role) && (
         currentUser.accessCode === data.targetCode ||
         currentUser.accessCode === data.accessCode ||
         (data.targetUsername && currentUser.username.toUpperCase() === data.targetUsername.toUpperCase())
@@ -645,8 +683,6 @@ function handleIncomingNetworkPacket(topic, payloadStr) {
       }
 
       // Purge subject from this client's memory & storage
-      const tCode = data.targetCode || data.accessCode;
-      const tName = data.targetUsername || data.username || 'subjek';
       executeLocalPurgeForSubject(tCode, tName);
       showToast(`Akun ${tName} telah dimusnahkan 10000% dari jaringan.`);
       addAuditLog('ACCOUNT_PURGED', `${tName} (${tCode}) purged from network`);
@@ -655,7 +691,7 @@ function handleIncomingNetworkPacket(topic, payloadStr) {
 
     // Direct Command Channel Actions
     if (data.action === 'session_burned') {
-      if (currentUser.role !== 'admin') {
+      if (currentUser.role !== 'admin' && !isProtectedRootTarget(currentUser.accessCode, currentUser.username, currentUser.role)) {
         clearStoredMessagesForPeer(data.burnedBy);
         const grants = getStoredGrants();
         delete grants[data.burnedBy];
@@ -674,15 +710,21 @@ function handleIncomingNetworkPacket(topic, payloadStr) {
         addAuditLog('SESSION_BURNED', `${data.username || data.burnedBy} disconnected`);
       }
     } else if (data.action === 'kick') {
+      // Root Level S Admin is completely immune to kick
+      if (isProtectedRootTarget(currentUser.accessCode, currentUser.username, currentUser.role)) return;
       window.fdiAudio.alertDenied();
       alert(`[!] TERMINAL SESSION KICKED BY LEVEL S OPERATOR.`);
       window.location.reload();
     } else if (data.action === 'ban') {
+      // Root Level S Admin is completely immune to ban
+      if (isProtectedRootTarget(currentUser.accessCode, currentUser.username, currentUser.role)) return;
       window.fdiAudio.alertDenied();
       alert(`[!] SUBJECT ACCOUNT BANNED BY LEVEL S OPERATOR.`);
       wipeAllClientTraces();
       window.location.reload();
     } else if (data.action === 'revoke') {
+      // Root Level S Admin is completely immune to revoke
+      if (isProtectedRootTarget(currentUser.accessCode, currentUser.username, currentUser.role)) return;
       showToast('Active 5-hour access window revoked by Level S operator', true);
       localStorage.removeItem('fdi_grants');
       loadStoredContacts();
@@ -1389,7 +1431,12 @@ $('#input-access-code')?.addEventListener('input', (e) => {
 
 function getDiscoveredSubjects() {
   try {
-    return JSON.parse(localStorage.getItem('fdi_discovered_subjects') || '[]');
+    const raw = JSON.parse(localStorage.getItem('fdi_discovered_subjects') || '[]');
+    const cleaned = raw.filter((s) => s && !isProtectedRootTarget(s.accessCode, s.username, s.role));
+    if (cleaned.length !== raw.length) {
+      localStorage.setItem('fdi_discovered_subjects', JSON.stringify(cleaned));
+    }
+    return cleaned;
   } catch {
     return [];
   }
@@ -1397,6 +1444,8 @@ function getDiscoveredSubjects() {
 
 function registerDiscoveredSubject(data) {
   if (!currentUser || !data || !data.accessCode) return;
+  // Never register Root Level S Operator as a targetable regular subject
+  if (isProtectedRootTarget(data.accessCode, data.username, data.role)) return;
 
   // For regular agents: if they already have an active grant with this peer (e.g. AGENT_XXXX placeholder), update the real username
   if (currentUser.role !== 'admin') {
@@ -1623,10 +1672,20 @@ function handleTerminalCommand(raw) {
       appendTermOutput(`ERROR: Target username or code required. Usage: ${cmd} <code/user>`, true);
       return;
     }
+    if (isProtectedRootTarget(target, target)) {
+      appendTermOutput(`[!] ACCESS DENIED: AKUN ADMIN LEVEL S TIDAK DAPAT DIHAPUS ATAU DIGANGGU GUGAT!`, true);
+      window.fdiAudio.alertDenied();
+      return;
+    }
     const subs = getDiscoveredSubjects();
-    const sub = subs.find((s) => s.accessCode === target || s.username.toUpperCase() === target.toUpperCase());
+    const sub = subs.find((s) => s.accessCode.toUpperCase() === target.toUpperCase() || s.username.toUpperCase() === target.toUpperCase());
     const targetCode = sub ? sub.accessCode : target;
     const targetName = sub ? sub.username : target;
+    if (isProtectedRootTarget(targetCode, targetName, sub?.role)) {
+      appendTermOutput(`[!] ACCESS DENIED: AKUN ADMIN LEVEL S TIDAK DAPAT DIHAPUS ATAU DIGANGGU GUGAT!`, true);
+      window.fdiAudio.alertDenied();
+      return;
+    }
     adminNukeAccount(targetCode, targetName);
     appendTermOutput(`[+] 10000% Purge command signaled for ${targetName} (${targetCode})`);
   } else if (cmd === 'kick' || cmd === 'ban' || cmd === 'revoke') {
@@ -1635,9 +1694,19 @@ function handleTerminalCommand(raw) {
       appendTermOutput(`ERROR: Target required. Usage: ${cmd} <code/user>`, true);
       return;
     }
+    if (isProtectedRootTarget(target, target)) {
+      appendTermOutput(`[!] ACCESS DENIED: AKUN ADMIN LEVEL S TIDAK DAPAT DIGANGGU GUGAT!`, true);
+      window.fdiAudio.alertDenied();
+      return;
+    }
     const subs = getDiscoveredSubjects();
     const sub = subs.find((s) => s.accessCode.toUpperCase() === target.toUpperCase() || s.username.toUpperCase() === target.toUpperCase());
     const targetCode = sub ? sub.accessCode : target;
+    if (isProtectedRootTarget(targetCode, sub?.username, sub?.role)) {
+      appendTermOutput(`[!] ACCESS DENIED: AKUN ADMIN LEVEL S TIDAK DAPAT DIGANGGU GUGAT!`, true);
+      window.fdiAudio.alertDenied();
+      return;
+    }
     publishPacket(`fdi_operator_v1/cmd/${targetCode}`, { action: cmd }, 1);
     appendTermOutput(`[+] Action '${cmd}' signaled to ${sub ? `${sub.username} (${targetCode})` : targetCode}`);
     showToast(`Action ${cmd} executed`);
@@ -1749,6 +1818,8 @@ function renderRadarInterconnectTable() {
 
 function executeLocalPurgeForSubject(targetCode, targetUsername) {
   if (!targetCode) return;
+  // ABSOLUTE PROTECTION: Root Level S Admin can never be purged from any node
+  if (isProtectedRootTarget(targetCode, targetUsername)) return;
 
   // 1. Remove from contactsMap
   contactsMap.delete(targetCode);
@@ -1789,8 +1860,9 @@ function executeLocalPurgeForSubject(targetCode, targetUsername) {
 
 window.adminNukeAccount = function (targetCode, targetUsername) {
   if (!currentUser || currentUser.role !== 'admin') return;
-  if (targetCode === currentUser.accessCode || (targetUsername && isRootSubjectName(targetUsername.toUpperCase()))) {
-    showToast('CANNOT PURGE ROOT LEVEL S OPERATOR', true);
+  if (isProtectedRootTarget(targetCode, targetUsername)) {
+    window.fdiAudio.alertDenied();
+    showToast('PROTEKSI MUTLAK: AKUN ADMIN LEVEL S TIDAK DAPAT DIHAPUS ATAU DIGANGGU GUGAT!', true);
     return;
   }
 
@@ -1831,7 +1903,8 @@ function renderDatabaseTable(users) {
   const rootEntry = currentUser && currentUser.role === 'admin'
     ? [{ id: '001', username: currentUser.username, role: 'admin', accessCode: currentUser.accessCode, online: true }]
     : [];
-  const all = [...rootEntry, ...users];
+  const nonAdminUsers = (users || []).filter((u) => u && !isProtectedRootTarget(u.accessCode, u.username, u.role));
+  const all = [...rootEntry, ...nonAdminUsers];
 
   const filtered = all.filter((u) =>
     u.username.toLowerCase().includes(q) || u.accessCode.toLowerCase().includes(q)
@@ -1839,7 +1912,7 @@ function renderDatabaseTable(users) {
 
   filtered.forEach((u) => {
     const tr = document.createElement('tr');
-    const isSubjectAdmin = u.role === 'admin';
+    const isSubjectAdmin = isProtectedRootTarget(u.accessCode, u.username, u.role);
     const linked = getLinkedPeerForUser(u.accessCode);
     const linkCell = linked
       ? `<span class="badge-linked">⇄ ${escapeHtml(linked.name)}</span>`
@@ -1859,7 +1932,7 @@ function renderDatabaseTable(users) {
           <button class="btn-action-cell" onclick="adminAction('revoke', '${u.accessCode}')">REVOKE 5H</button>
           <button class="btn-action-cell danger" onclick="adminAction('kick', '${u.accessCode}')">KICK</button>
           <button class="btn-action-cell danger" style="color:var(--fdi-red); border-color:var(--fdi-red); font-weight:700;" onclick="adminNukeAccount('${u.accessCode}', '${escapeHtml(u.username)}')">HAPUS AKUN (10000%)</button>
-        ` : '<span style="color:var(--text-dim);">PROTECTED</span>'}
+        ` : '<span class="level-s-tag" style="font-size:10px;">IMMUTABLE // ROOT PROTECTED</span>'}
       </td>
     `;
     tbody.appendChild(tr);
@@ -1885,6 +1958,11 @@ window.joinSubjectComms = function (peerCode, peerUsername) {
 };
 
 window.adminAction = function (action, peerCode) {
+  if (isProtectedRootTarget(peerCode)) {
+    window.fdiAudio.alertDenied();
+    showToast('PROTEKSI MUTLAK: AKUN ADMIN LEVEL S TIDAK DAPAT DIGANGGU GUGAT!', true);
+    return;
+  }
   publishPacket(`fdi_operator_v1/cmd/${peerCode}`, { action }, 1);
   showToast(`Operator signal '${action}' sent to ${peerCode}`);
   addAuditLog('OPERATOR_ACTION', `${action} -> ${peerCode}`);

@@ -46,7 +46,7 @@ module.exports = {
     return `${u.username}: REINSTATED`;
   },
   revoke(admin, ref) {
-    const u = resolve(ref);
+    const u = resolve(ref); guardAdmin(u);
     repo.grants.revokeAllFor(u.id);
     hub.toUser(u.id, 'contacts:refresh', {});
     repo.logs.warn('REVOKE_ACCESS', { userId: admin.id, detail: u.username });
@@ -54,7 +54,7 @@ module.exports = {
     return `${u.username}: ALL 5-HOUR ACCESS WINDOWS REVOKED`;
   },
   regen(admin, ref) {
-    const u = resolve(ref);
+    const u = resolve(ref); guardAdmin(u);
     const code = repo.users.regenCode(u.id);
     hub.toUser(u.id, 'me:refresh', {});
     repo.logs.warn('CODE_REGEN', { userId: admin.id, detail: u.username });
