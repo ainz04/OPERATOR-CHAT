@@ -275,11 +275,11 @@
           </div>
         </section>
 
-        <!-- 5. MODULE: FILE ANALYZER (Level S Forensic Tool) -->
+        <!-- 5. MODULE: FILE ANALYZER & CRYPT (Level S Forensic Tool) -->
         <section id="module-analyzer" class="workspace-module" style="display:none; height:100%; width:100%; flex-direction:column;">
           <div class="window-header">
-            <span>FILE FORENSIC ANALYZER // PAYLOAD INSPECTION</span>
-            <span style="font-size:11px; color:var(--fdi-cyan);">DIGITAL EVIDENCE UNIT</span>
+            <span>FILE FORENSIC & CRYPT ANALYZER // PAYLOAD DECRYPTION</span>
+            <span style="font-size:11px; color:var(--fdi-cyan);">DIGITAL EVIDENCE & CRYPT UNIT</span>
           </div>
           <div class="analyzer-module">
             <aside class="analyzer-files-list">
@@ -292,8 +292,8 @@
             </aside>
             <div class="analyzer-report-view" id="analyzer-report-container">
               <div class="empty-chat-state" style="margin:auto;">
-                <p>SELECT EVIDENCE FILE TO ANALYZE</p>
-                <p style="font-size:12px; margin-top:6px;">Calculates Shannon entropy, file signatures, magic byte headers, metadata, strings, and hex disassembly.</p>
+                <p>SELECT EVIDENCE FILE TO ANALYZE & DECRYPT</p>
+                <p style="font-size:12px; margin-top:6px;">Inspects encrypted raw hex disassembly and runs CRYPT to recover and display the original file.</p>
               </div>
             </div>
           </div>
@@ -319,17 +319,30 @@
           </div>
         </section>
 
-        <!-- 7. MODULE: DECRYPTOR -->
+        <!-- 7. MODULE: DECRYPTOR (Interactive Raw Hex to Original File Decryptor) -->
         <section id="module-decryptor" class="workspace-module" style="display:none; height:100%; width:100%; flex-direction:column;">
           <div class="window-header">
-            <span>AUTOMATED DECRYPTION MATRIX // AES CIPHER BREAKER</span>
+            <span>AUTOMATED DECRYPTION MATRIX // HEX PAYLOAD RECONSTRUCTOR</span>
             <span style="font-size:11px; color:var(--fdi-green);">QUANTUM ACCELERATOR</span>
           </div>
-          <div class="decryptor-module">
-            <div class="matrix-stream" id="decryptor-matrix-box">
-              0x7F45 0x4C46 0x0201 0x0100 :: READY
+          <div class="decryptor-module" style="align-items:stretch; justify-content:flex-start; overflow-y:auto; gap:14px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <div style="font-weight:700; color:var(--fdi-amber); font-size:12px;">
+                PASTE ENCRYPTED RAW HEX FROM [FILE] MODULE OR SELECT ACTIVE EVIDENCE PAYLOAD:
+              </div>
+              <div style="display:flex; gap:8px;">
+                <button class="btn-retro-sm" id="btn-load-latest-hex">LOAD LATEST FILE HEX</button>
+                <button class="btn-retro-sm" id="btn-clear-crypt-hex">CLEAR</button>
+              </div>
             </div>
-            <button class="btn-fdi-primary" id="btn-run-decryption-demo">INITIALIZE CIPHER SCAN</button>
+            <textarea id="crypt-hex-input" class="fdi-text-input" rows="5" placeholder="Paste Raw Hex disassembly here (e.g. 00000000  89 50 4e 47 ...) then click CRYPT to reconstruct the original file..." style="width:100%; font-size:12px; line-height:1.4; resize:vertical; user-select:text;"></textarea>
+            <div style="display:flex; justify-content:space-between; align-items:center; background:#050b08; border:1px solid var(--border-dim); padding:10px 14px;">
+              <div class="matrix-stream" id="decryptor-matrix-box" style="font-size:18px; margin-bottom:0; text-align:left;">
+                0x7F45 0x4C46 0x0201 0x0100 :: READY FOR HEX PAYLOAD
+              </div>
+              <button class="btn-fdi-primary" id="btn-run-decryption-demo">CRYPT // REVEAL ORIGINAL FILE</button>
+            </div>
+            <div id="crypt-decrypted-result" style="flex:1; display:flex; flex-direction:column;"></div>
           </div>
         </section>
 

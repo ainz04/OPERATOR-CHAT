@@ -2007,38 +2007,50 @@ window.enterInterceptRoom = function (aCode, bCode, aName, bName) {
   showToast(`Joined channel with ${aName}`);
 };
 
-// 4. FILE FORENSIC ANALYZER CONTROLLER
-function loadAnalyzerFiles() {
-  const container = $('#analyzer-files-container');
-  container.innerHTML = '';
+// 4. FILE FORENSIC & CRYPT ANALYZER CONTROLLER
+let activeForensicFile = null;
+let activeForensicHexText = '';
 
-  if (vaultFiles.length === 0) {
-    container.innerHTML = '<div style="padding:16px; color:var(--text-dim); font-size:12px;">No evidence files captured yet. Transmit a file in Comms to analyze.</div>';
-    return;
-  }
+function syncVaultFilesFromMessages() {
+  const seen = new Set(vaultFiles.map((f) => `${f.name}|${f.size}`));
+  const addFileIfNew = (fileObj) => {
+    if (!fileObj || !fileObj.dataUrl) return;
+    const sig = `${fileObj.name}|${fileObj.size}`;
+    if (!seen.has(sig)) {
+      seen.add(sig);
+      vaultFiles.push(fileObj);
+    }
+  };
 
-  vaultFiles.forEach((f, idx) => {
-    const item = document.createElement('div');
-    item.className = 'contact-item';
-    item.innerHTML = `
-      <div style="font-weight:700; color:var(--text-bright);">${escapeHtml(f.name)}</div>
-      <div style="font-size:11px; color:var(--text-dim); display:flex; justify-content:space-between; margin-top:2px;">
-        <span>${formatBytes(f.size)}</span>
-        <span>#EV-${idx + 1}</span>
-      </div>
-    `;
-    item.addEventListener('click', () => runClientFileForensics(f));
-    container.appendChild(item);
+  // Scan intercepted messages
+  interceptedMessages.forEach((m) => {
+    if (m && m.kind === 'file' && m.file) addFileIfNew(m.file);
   });
+
+  // Scan stored messages for current user
+  try {
+    const key = getMessagesKey();
+    const all = JSON.parse(localStorage.getItem(key) || '{}');
+    for (const msgs of Object.values(all)) {
+      if (Array.isArray(msgs)) {
+        msgs.forEach((m) => {
+          if (m && m.kind === 'file' && m.file) addFileIfNew(m.file);
+        });
+      }
+    }
+  } catch {
+    // ignore storage parse error
+  }
 }
 
-function runClientFileForensics(fileObj) {
-  const reportBox = $('#analyzer-report-container');
-  reportBox.innerHTML = '<div style="padding:20px; color:var(--fdi-cyan);">RUNNING IN-BROWSER FORENSIC SCAN...</div>';
-  window.fdiAudio.beep(1600, 0.08);
+function buildHexDisassemblyForFile(fileObj) {
+  let byteSample = '';
+  try {
+    byteSample = atob((fileObj.dataUrl || '').split(',')[1] || '').slice(0, 512);
+  } catch {
+    byteSample = '';
+  }
 
-  const byteSample = atob(fileObj.dataUrl.split(',')[1] || '').slice(0, 512);
-  let hexLines = [];
   const freq = new Array(256).fill(0);
   for (let i = 0; i < byteSample.length; i++) {
     freq[byteSample.charCodeAt(i) & 0xff]++;
@@ -2052,6 +2064,8 @@ function runClientFileForensics(fileObj) {
       }
     }
   }
+
+  const hexLines = [];
   for (let i = 0; i < byteSample.length; i += 16) {
     let hexPart = '';
     let asciiPart = '';
@@ -2066,6 +2080,121 @@ function runClientFileForensics(fileObj) {
     }
     hexLines.push(`${i.toString(16).padStart(8, '0')}  ${hexPart} |${asciiPart}|`);
   }
+
+  return {
+    entropy,
+    hexDumpText: hexLines.join('\n') || 'HEX STREAM READY'
+  };
+}
+
+function renderOriginalDecryptedFileHtml(fileObj) {
+  if (!fileObj || !fileObj.dataUrl) return '';
+  const mime = (fileObj.mime || 'application/octet-stream').toLowerCase();
+  const nameLower = (fileObj.name || '').toLowerCase();
+  let previewHtml = '';
+
+  if (mime.startsWith('image/')) {
+    previewHtml = `
+      <div style="background:#020503; border:1px solid var(--border-bright); padding:10px; display:flex; justify-content:center;">
+        <img src="${fileObj.dataUrl}" alt="${escapeHtml(fileObj.name)}" style="max-width:100%; max-height:420px; object-fit:contain; border:1px solid var(--fdi-green);">
+      </div>
+    `;
+  } else if (mime.startsWith('audio/')) {
+    previewHtml = `
+      <div style="background:#020503; border:1px solid var(--border-bright); padding:12px;">
+        <audio controls src="${fileObj.dataUrl}" class="msg-audio-player" style="width:100%;"></audio>
+      </div>
+    `;
+  } else if (mime.startsWith('video/')) {
+    previewHtml = `
+      <div style="background:#020503; border:1px solid var(--border-bright); padding:10px; display:flex; justify-content:center;">
+        <video controls src="${fileObj.dataUrl}" style="max-width:100%; max-height:400px; border:1px solid var(--fdi-green);"></video>
+      </div>
+    `;
+  } else if (mime === 'application/pdf') {
+    previewHtml = `
+      <iframe src="${fileObj.dataUrl}" style="width:100%; height:420px; border:1px solid var(--fdi-green); background:#fff;"></iframe>
+    `;
+  } else {
+    let decodedText = '';
+    try {
+      const rawBytes = atob((fileObj.dataUrl || '').split(',')[1] || '');
+      const isTextLike =
+        mime.startsWith('text/') ||
+        /\.(txt|json|csv|md|html|xml|js|css|log|ini|yml|yaml)$/i.test(nameLower);
+      if (isTextLike) {
+        decodedText = decodeURIComponent(escape(rawBytes));
+      } else {
+        decodedText = rawBytes.replace(/[^\x20-\x7E\r\n\t]/g, '.');
+      }
+    } catch {
+      decodedText = '[BINARY STREAM DECODED - CLICK DOWNLOAD FILE ASLI TO OPEN]';
+    }
+    previewHtml = `
+      <div class="hex-dump-box" style="color:var(--text-bright); border-color:var(--fdi-green); max-height:320px; overflow-y:auto;">${escapeHtml(decodedText.slice(0, 8000))}</div>
+    `;
+  }
+
+  return `
+    <div class="decrypted-file-card">
+      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border-bright); padding-bottom:10px;">
+        <div>
+          <div style="color:var(--fdi-green); font-weight:700; font-size:14px;">
+            [+] CRYPT SUCCESS // FILE ASLI DITEMUKAN: ${escapeHtml(fileObj.name)}
+          </div>
+          <div style="font-size:11px; color:var(--text-dim); margin-top:2px;">
+            ORIGINAL MIME: ${escapeHtml(fileObj.mime)} // SIZE: ${formatBytes(fileObj.size)} // STATUS: DECRYPTED ORIGINAL PAYLOAD
+          </div>
+        </div>
+        <a href="${fileObj.dataUrl}" download="${escapeHtml(fileObj.name)}" class="btn-fdi-primary" style="text-decoration:none; font-size:12px; padding:6px 14px;">
+          DOWNLOAD FILE ASLI
+        </a>
+      </div>
+      ${previewHtml}
+    </div>
+  `;
+}
+
+function loadAnalyzerFiles() {
+  syncVaultFilesFromMessages();
+  const container = $('#analyzer-files-container');
+  if (!container) return;
+  container.innerHTML = '';
+
+  if (vaultFiles.length === 0) {
+    container.innerHTML = '<div style="padding:16px; color:var(--text-dim); font-size:12px;">No evidence files captured yet. Transmit a file in Comms to analyze.</div>';
+    return;
+  }
+
+  vaultFiles.forEach((f, idx) => {
+    const item = document.createElement('div');
+    item.className = `contact-item ${activeForensicFile === f ? 'active' : ''}`;
+    item.innerHTML = `
+      <div style="font-weight:700; color:var(--text-bright);">${escapeHtml(f.name)}</div>
+      <div style="font-size:11px; color:var(--text-dim); display:flex; justify-content:space-between; margin-top:2px;">
+        <span>${formatBytes(f.size)}</span>
+        <span style="color:var(--fdi-amber);">#EV-${idx + 1}</span>
+      </div>
+    `;
+    item.addEventListener('click', () => runClientFileForensics(f));
+    container.appendChild(item);
+  });
+}
+
+function runClientFileForensics(fileObj) {
+  activeForensicFile = fileObj;
+  loadAnalyzerFiles();
+
+  const reportBox = $('#analyzer-report-container');
+  reportBox.innerHTML = '<div style="padding:20px; color:var(--fdi-cyan);">RUNNING IN-BROWSER FORENSIC SCAN...</div>';
+  window.fdiAudio.beep(1600, 0.08);
+
+  const { entropy, hexDumpText } = buildHexDisassemblyForFile(fileObj);
+  activeForensicHexText = hexDumpText;
+
+  // Also sync hex into CRYPT module input automatically
+  const cryptInput = $('#crypt-hex-input');
+  if (cryptInput) cryptInput.value = hexDumpText;
 
   setTimeout(() => {
     reportBox.innerHTML = `
@@ -2084,13 +2213,72 @@ function runClientFileForensics(fileObj) {
           <div class="report-card-title">FILE SIZE</div>
           <div class="report-card-val">${formatBytes(fileObj.size)}</div>
         </div>
+        <div class="report-card">
+          <div class="report-card-title">PAYLOAD CIPHER STATUS</div>
+          <div class="report-card-val" id="forensic-cipher-status" style="color:var(--fdi-amber); font-size:13px;">ENCRYPTED RAW HEX</div>
+        </div>
       </div>
 
-      <div style="font-weight:700; color:var(--fdi-green); margin-top:8px;">RAW HEX DISASSEMBLY (FIRST 512 BYTES)</div>
-      <div class="hex-dump-box">${escapeHtml(hexLines.join('\n') || 'HEX STREAM READY')}</div>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:10px; background:#07120c; border:1px solid var(--border-bright); padding:8px 12px;">
+        <div style="font-weight:700; color:var(--fdi-green);">RAW HEX DISASSEMBLY (FIRST 512 BYTES // SELECTABLE)</div>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button class="btn-retro-sm" id="btn-copy-raw-hex" title="Salin Raw Hex">COPY RAW HEX</button>
+          <button class="btn-fdi-primary" id="btn-inline-crypt-file" style="padding:5px 18px; font-size:12px;">CRYPT</button>
+        </div>
+      </div>
+
+      <div id="inline-crypt-file-viewer" style="display:none;"></div>
+
+      <div class="hex-dump-box" id="forensic-hex-dump-box">${escapeHtml(hexDumpText)}</div>
     `;
+
+    $('#btn-copy-raw-hex')?.addEventListener('click', () => {
+      navigator.clipboard.writeText(hexDumpText);
+      const cInput = $('#crypt-hex-input');
+      if (cInput) cInput.value = hexDumpText;
+      window.fdiAudio.beep(1200, 0.05);
+      showToast('Raw Hex copied to clipboard & synced to CRYPT');
+    });
+
+    $('#btn-inline-crypt-file')?.addEventListener('click', () => {
+      const btn = $('#btn-inline-crypt-file');
+      const statusEl = $('#forensic-cipher-status');
+      const viewer = $('#inline-crypt-file-viewer');
+      if (!viewer) return;
+
+      btn.textContent = 'DECRYPTING...';
+      btn.disabled = true;
+      window.fdiAudio.beep(1400, 0.06);
+
+      let step = 0;
+      const timer = setInterval(() => {
+        window.fdiAudio.typeKey(' ');
+        step++;
+        if (step >= 6) {
+          clearInterval(timer);
+          btn.textContent = 'CRYPT // DECRYPTED';
+          btn.disabled = false;
+          if (statusEl) {
+            statusEl.textContent = 'DECRYPTED (FILE ASLI READY)';
+            statusEl.style.color = 'var(--fdi-green)';
+          }
+          viewer.style.display = 'block';
+          viewer.innerHTML = renderOriginalDecryptedFileHtml(fileObj);
+
+          // Also sync result to CRYPT module
+          const cryptResult = $('#crypt-decrypted-result');
+          const matrixBox = $('#decryptor-matrix-box');
+          if (cryptResult) cryptResult.innerHTML = renderOriginalDecryptedFileHtml(fileObj);
+          if (matrixBox) matrixBox.textContent = `PLAINTEXT PAYLOAD CRACKED :: ${fileObj.name}`;
+
+          window.fdiAudio.chimeSuccess();
+          showToast(`File asli "${fileObj.name}" berhasil didekripsi!`);
+        }
+      }, 65);
+    });
+
     window.fdiAudio.chimeSuccess();
-  }, 400);
+  }, 300);
 }
 
 // 5. AUDIO VISUALIZER OSCILLOSCOPE
@@ -2161,9 +2349,98 @@ $('#btn-toggle-mic-viz')?.addEventListener('click', async () => {
   }
 });
 
-// 6. DECRYPTOR DEMO
+// 6. DECRYPTOR MODULE (Interactive Raw Hex to Original File Reconstructor)
+$('#btn-load-latest-hex')?.addEventListener('click', () => {
+  syncVaultFilesFromMessages();
+  const targetFile = activeForensicFile || vaultFiles[vaultFiles.length - 1];
+  if (!targetFile) {
+    showToast('Belum ada file bukti yang masuk', true);
+    return;
+  }
+  activeForensicFile = targetFile;
+  const { hexDumpText } = buildHexDisassemblyForFile(targetFile);
+  $('#crypt-hex-input').value = hexDumpText;
+  window.fdiAudio.beep(1100, 0.05);
+  showToast(`Loaded Raw Hex from ${targetFile.name}`);
+});
+
+$('#btn-clear-crypt-hex')?.addEventListener('click', () => {
+  $('#crypt-hex-input').value = '';
+  $('#crypt-decrypted-result').innerHTML = '';
+  $('#decryptor-matrix-box').textContent = '0x7F45 0x4C46 0x0201 0x0100 :: READY FOR HEX PAYLOAD';
+});
+
+function reconstructFileFromRawHexText(rawInput) {
+  syncVaultFilesFromMessages();
+  const cleanInput = rawInput.trim();
+
+  // 1. Check if the pasted Raw Hex matches any captured evidence file in vaultFiles
+  for (const f of vaultFiles) {
+    const { hexDumpText } = buildHexDisassemblyForFile(f);
+    if (cleanInput && (hexDumpText.includes(cleanInput.slice(0, 48)) || cleanInput.includes(hexDumpText.slice(0, 48)))) {
+      return f;
+    }
+  }
+  if (!cleanInput && activeForensicFile) {
+    return activeForensicFile;
+  }
+
+  // 2. Otherwise parse raw hex bytes directly from the pasted hex disassembly or hex stream
+  const lines = cleanInput.split(/\r?\n/);
+  const byteValList = [];
+  for (const line of lines) {
+    // Strip leading offset (e.g. "00000000  ") and trailing ASCII column ("|....|")
+    const withoutAscii = line.replace(/\|.*\|$/, '');
+    const withoutOffset = withoutAscii.replace(/^[0-9a-fA-F]{6,8}\s+/, '');
+    const matches = withoutOffset.match(/\b[0-9a-fA-F]{2}\b/g);
+    if (matches) {
+      matches.forEach((h) => byteValList.push(parseInt(h, 16)));
+    }
+  }
+
+  if (byteValList.length === 0) {
+    return activeForensicFile || vaultFiles[vaultFiles.length - 1] || null;
+  }
+
+  // Detect magic bytes (PNG, JPG, GIF, PDF, WEBM, MP3, etc.)
+  let mime = 'text/plain';
+  let ext = 'txt';
+  if (byteValList[0] === 0x89 && byteValList[1] === 0x50 && byteValList[2] === 0x4e && byteValList[3] === 0x47) {
+    mime = 'image/png'; ext = 'png';
+  } else if (byteValList[0] === 0xff && byteValList[1] === 0xd8) {
+    mime = 'image/jpeg'; ext = 'jpg';
+  } else if (byteValList[0] === 0x47 && byteValList[1] === 0x49 && byteValList[2] === 0x46) {
+    mime = 'image/gif'; ext = 'gif';
+  } else if (byteValList[0] === 0x25 && byteValList[1] === 0x50 && byteValList[2] === 0x44 && byteValList[3] === 0x46) {
+    mime = 'application/pdf'; ext = 'pdf';
+  } else if (byteValList[0] === 0x1a && byteValList[1] === 0x45 && byteValList[2] === 0xdf && byteValList[3] === 0xa3) {
+    mime = 'audio/webm'; ext = 'webm';
+  }
+
+  let binStr = '';
+  for (let i = 0; i < byteValList.length; i++) {
+    binStr += String.fromCharCode(byteValList[i]);
+  }
+  const b64 = btoa(binStr);
+  return {
+    name: `decrypted_payload.${ext}`,
+    mime,
+    size: byteValList.length,
+    dataUrl: `data:${mime};base64,${b64}`
+  };
+}
+
 $('#btn-run-decryption-demo')?.addEventListener('click', () => {
   const box = $('#decryptor-matrix-box');
+  const rawHex = ($('#crypt-hex-input')?.value || '').trim();
+  const targetFile = reconstructFileFromRawHexText(rawHex);
+
+  if (!targetFile) {
+    window.fdiAudio.alertDenied();
+    showToast('Masukkan Raw Hex dari menu FILE atau pilih file bukti terlebih dahulu!', true);
+    return;
+  }
+
   const hexes = '0123456789ABCDEF';
   let cycles = 0;
   const interval = setInterval(() => {
@@ -2171,15 +2448,20 @@ $('#btn-run-decryption-demo')?.addEventListener('click', () => {
     for (let i = 0; i < 4; i++) {
       line += '0x' + hexes[Math.floor(Math.random() * 16)] + hexes[Math.floor(Math.random() * 16)] + hexes[Math.floor(Math.random() * 16)] + hexes[Math.floor(Math.random() * 16)] + ' ';
     }
-    box.textContent = `${line} :: ATTEMPT #${cycles * 1337}`;
+    box.textContent = `${line} :: DECRYPTING HEX #${cycles * 1337}`;
     window.fdiAudio.typeKey(' ');
     cycles++;
-    if (cycles > 18) {
+    if (cycles > 10) {
       clearInterval(interval);
-      box.textContent = 'PLAINTEXT CIPHER CRACKED: [CLEARANCE LEVEL S CONFIRMED]';
+      box.textContent = `PLAINTEXT CIPHER CRACKED :: ${targetFile.name}`;
+      const resBox = $('#crypt-decrypted-result');
+      if (resBox) {
+        resBox.innerHTML = renderOriginalDecryptedFileHtml(targetFile);
+      }
       window.fdiAudio.chimeSuccess();
+      showToast(`File asli "${targetFile.name}" berhasil ditampilkan!`);
     }
-  }, 90);
+  }, 65);
 });
 
 // 7. MONITOR CONTROLLER

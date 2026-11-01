@@ -620,6 +620,8 @@ body {
   white-space: pre-wrap;
   word-break: break-word;
   font-size: 14px;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 /* File attachments in messages */
@@ -813,6 +815,8 @@ body {
   font-size: 13px;
   line-height: 1.45;
   text-shadow: 0 0 4px var(--fdi-green-glow);
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .term-input-row {
@@ -1020,6 +1024,21 @@ body {
   color: #55c482;
   white-space: pre;
   overflow-x: auto;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
+.decrypted-file-card {
+  background: #050f0a;
+  border: 1px solid var(--fdi-green);
+  box-shadow: 0 0 16px rgba(57, 255, 132, 0.15);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 /* 5. AUDIO ANALYZER MODULE */
