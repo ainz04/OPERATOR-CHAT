@@ -35,6 +35,7 @@ let activeNetworkLinks = new Map(); // pairKey -> { key, codeA, nameA, codeB, na
 let processedIncomingIds = new Set();
 let processedInterceptIds = new Set();
 let presenceInterval = null;
+let mqttReconnectTimer = null;
 
 // DOM Helpers
 const $ = (sel) => document.querySelector(sel);
@@ -121,6 +122,13 @@ function initApp() {
   // Purge any legacy un-scoped messages to ensure stale chats from other sessions never stick
   localStorage.removeItem('fdi_messages');
 
+  // Sync initial audio toggle UI state with saved preference
+  const lbl = $('#audio-status-label');
+  if (lbl && window.fdiAudio) {
+    lbl.textContent = window.fdiAudio.enabled ? 'ON' : 'MUTED';
+    lbl.style.color = window.fdiAudio.enabled ? 'var(--fdi-green)' : 'var(--text-dim)';
+  }
+
   const savedProfile = localStorage.getItem('fdi_user_profile');
   if (savedProfile) {
     try {
@@ -176,7 +184,12 @@ function handleAuthSubmit() {
     return;
   }
 
-  const u = username.toUpperCase();
+  const u = username.toUpperCase().replace(/[^A-Z0-9_.\- ]/g, '').trim();
+  if (!u) {
+    window.fdiAudio.alertDenied();
+    showToast('Invalid username characters', true);
+    return;
+  }
 
   // 1. Level S Admin Check (TANNER / EVANS.TANNER04)
   if (u === ADMIN_USERNAME) {
@@ -303,6 +316,11 @@ $('#btn-logout')?.addEventListener('click', () => {
 // HAPUS AKUN SAYA (10000% Self Account Destruction)
 $('#btn-purge-self')?.addEventListener('click', () => {
   if (!currentUser) return;
+  if (currentUser.role === 'admin' || currentUser.username === ADMIN_USERNAME) {
+    window.fdiAudio.alertDenied();
+    showToast('ROOT OPERATOR TANNER ACCOUNT IS PROTECTED', true);
+    return;
+  }
   const ok = confirm(`PERINGATAN KRITIS: HAPUS AKUN 10000%?\n\nApakah Anda yakin ingin memusnahkan akun "${currentUser.username}" secara permanen?\nSeluruh riwayat, room, dan kunci enkripsi akan dimusnahkan tanpa meninggalkan jejak sedikitpun!`);
   if (!ok) return;
 
@@ -349,6 +367,11 @@ $('#btn-copy-my-code')?.addEventListener('click', () => {
 // ==========================================================================
 
 function initServerlessMQTT() {
+  if (mqttReconnectTimer) {
+    clearTimeout(mqttReconnectTimer);
+    mqttReconnectTimer = null;
+  }
+
   if (typeof Paho === 'undefined') {
     console.error('Paho MQTT library not loaded');
     $('#top-link-status').textContent = 'OFFLINE (LIB MISSING)';
@@ -364,7 +387,7 @@ function initServerlessMQTT() {
     mqttConnected = false;
   }
 
-  const clientId = 'fdi_' + currentUser.username.toLowerCase() + '_' + Math.random().toString(16).substr(2, 6);
+  const clientId = 'fdi_' + currentUser.username.toLowerCase().replace(/[^a-z0-9]/g, '') + '_' + Math.random().toString(16).substr(2, 6);
   const brokerHost = 'broker.emqx.io';
   const brokerPort = 8084;
   const path = '/mqtt';
@@ -379,7 +402,8 @@ function initServerlessMQTT() {
     mqttConnected = false;
     $('#top-link-status').textContent = 'DISCONNECTED (RETRYING)';
     $('#top-link-status').style.color = 'var(--fdi-red)';
-    setTimeout(initServerlessMQTT, 4000);
+    if (mqttReconnectTimer) clearTimeout(mqttReconnectTimer);
+    mqttReconnectTimer = setTimeout(initServerlessMQTT, 4000);
   };
 
   mqttClient.onMessageArrived = (message) => {
@@ -422,7 +446,8 @@ function initServerlessMQTT() {
       console.warn('Failed to connect to primary broker, retrying...', err);
       $('#top-link-status').textContent = 'RETRYING...';
       $('#top-link-status').style.color = 'var(--fdi-red)';
-      setTimeout(initServerlessMQTT, 5000);
+      if (mqttReconnectTimer) clearTimeout(mqttReconnectTimer);
+      mqttReconnectTimer = setTimeout(initServerlessMQTT, 5000);
     }
   };
 
@@ -820,16 +845,13 @@ function unselectActiveContact(burnMessage = null) {
   $('#chat-bilateral-banner').style.display = 'none';
   $('#chat-input-panel').style.display = 'none';
 
-  if (burnMessage) {
-    $('#chat-expired-banner').style.display = 'flex';
-    $('#chat-expired-banner').innerHTML = `
-      <div>${burnMessage}</div>
-      <button class="btn-fdi-primary" id="btn-reopen-code" style="padding:4px 10px; font-size:11px;">ENTER CODE</button>
-    `;
-    $('#btn-reopen-code')?.addEventListener('click', () => $('#btn-open-code-modal').click());
-  } else {
-    $('#chat-expired-banner').style.display = 'none';
-  }
+  const bannerText = burnMessage || '[!] 5-HOUR TRANSMISSION WINDOW EXPIRED. Subject code re-entry required.';
+  $('#chat-expired-banner').innerHTML = `
+    <div>${bannerText}</div>
+    <button class="btn-fdi-primary" id="btn-reopen-code" style="padding:4px 10px; font-size:11px;">ENTER CODE</button>
+  `;
+  $('#btn-reopen-code')?.addEventListener('click', () => $('#btn-open-code-modal').click());
+  $('#chat-expired-banner').style.display = burnMessage ? 'flex' : 'none';
 }
 
 function selectContact(peerCode) {
@@ -1032,9 +1054,13 @@ function handleIncomingMessage(msg) {
   const isSaved = saveStoredMessage(msg.fromCode, msg);
   if (!isSaved) return;
 
+  if (msg.kind === 'file' && msg.file) {
+    vaultFiles.push(msg.file);
+  }
+
   recordNetworkLink(msg.fromCode, msg.fromName, msg.toCode || currentUser.accessCode, msg.toName || currentUser.username, false);
 
-  // If sender not in contacts, add grant only if active link
+  // If sender not in contacts, add grant only if active link; or update placeholder name
   if (!contactsMap.has(msg.fromCode)) {
     if (currentUser.role === 'admin') {
       contactsMap.set(msg.fromCode, {
@@ -1049,6 +1075,20 @@ function handleIncomingMessage(msg) {
     } else {
       saveGrant(msg.fromCode, msg.fromName);
       loadStoredContacts();
+    }
+  } else if (msg.fromName && contactsMap.get(msg.fromCode)?.username !== msg.fromName) {
+    const c = contactsMap.get(msg.fromCode);
+    c.username = msg.fromName;
+    if (currentUser.role !== 'admin') {
+      const grants = getStoredGrants();
+      if (grants[msg.fromCode]) {
+        grants[msg.fromCode].username = msg.fromName;
+        localStorage.setItem('fdi_grants', JSON.stringify(grants));
+      }
+    }
+    renderContactsList();
+    if (activeContact && activeContact.accessCode === msg.fromCode) {
+      updateActiveContactHeader();
     }
   }
 
@@ -1268,9 +1308,29 @@ function getDiscoveredSubjects() {
 }
 
 function registerDiscoveredSubject(data) {
-  // Only Level S Admin monitors discovered network nodes!
-  if (!currentUser || currentUser.role !== 'admin') return;
+  if (!currentUser || !data || !data.accessCode) return;
 
+  // For regular agents: if they already have an active grant with this peer (e.g. AGENT_XXXX placeholder), update the real username
+  if (currentUser.role !== 'admin') {
+    if (contactsMap.has(data.accessCode) && data.username) {
+      const c = contactsMap.get(data.accessCode);
+      if (c.username !== data.username) {
+        c.username = data.username;
+        const grants = getStoredGrants();
+        if (grants[data.accessCode]) {
+          grants[data.accessCode].username = data.username;
+          localStorage.setItem('fdi_grants', JSON.stringify(grants));
+        }
+        renderContactsList();
+        if (activeContact && activeContact.accessCode === data.accessCode) {
+          updateActiveContactHeader();
+        }
+      }
+    }
+    return;
+  }
+
+  // Level S Admin: silently register and update contacts + database
   const list = getDiscoveredSubjects();
   const idx = list.findIndex((s) => s.accessCode === data.accessCode);
   if (idx >= 0) {
@@ -1281,6 +1341,16 @@ function registerDiscoveredSubject(data) {
     addAuditLog('NODE_DISCOVERED', `Subject ${data.username} (${data.accessCode}) entered network`);
   }
   localStorage.setItem('fdi_discovered_subjects', JSON.stringify(list));
+
+  contactsMap.set(data.accessCode, {
+    username: data.username,
+    accessCode: data.accessCode,
+    role: data.role || 'agent',
+    unlimited: true,
+    expiresAt: null,
+    online: true
+  });
+  renderContactsList();
   renderDatabaseTable(list);
 }
 
@@ -1416,6 +1486,40 @@ function handleTerminalCommand(raw) {
       });
       appendTermOutput(out);
     }
+  } else if (cmd === 'whois') {
+    const target = args[0];
+    if (!target) {
+      appendTermOutput('ERROR: Target username or code required. Usage: whois <user/code>', true);
+      return;
+    }
+    const all = [{ id: 'fdi_root_tanner', username: ADMIN_USERNAME, role: 'admin', accessCode: ADMIN_ACCESS_CODE, online: true }, ...getDiscoveredSubjects()];
+    const sub = all.find((s) => s.accessCode.toUpperCase() === target.toUpperCase() || s.username.toUpperCase() === target.toUpperCase());
+    if (!sub) {
+      appendTermOutput(`SUBJECT NOT FOUND: ${target}`, true);
+      return;
+    }
+    const linked = getLinkedPeerForUser(sub.accessCode);
+    appendTermOutput(`
+ SUBJECT DOSSIER :: ${sub.username}
+ -----------------------------------------
+ ID ............. ${sub.id || 'N/A'}
+ USERNAME ....... ${sub.username}
+ CLEARANCE ...... ${sub.role === 'admin' ? 'LEVEL S (ROOT)' : 'AGENT'}
+ ACCESS CODE .... ${sub.accessCode}
+ LINKED PEER .... ${linked ? `${linked.name} (${linked.code})` : 'STANDBY (UNLINKED)'}
+ LAST SEEN ...... ${sub.lastSeen ? new Date(sub.lastSeen).toLocaleString() : 'ONLINE NOW'}
+    `);
+  } else if (cmd === 'feed') {
+    if (interceptedMessages.length === 0) {
+      appendTermOutput('No intercepted network transmissions recorded yet.');
+    } else {
+      const recent = interceptedMessages.slice(-15);
+      let out = 'RECENT INTERCEPTED NETWORK TRANSMISSIONS:\n-----------------------------------------\n';
+      recent.forEach((m) => {
+        out += `[${new Date(m.at).toLocaleTimeString('sv-SE')}] ${m.fromName} (${m.fromCode}) -> ${m.toName} (${m.toCode}): ${m.text || '[FILE]'}\n`;
+      });
+      appendTermOutput(out);
+    }
   } else if (cmd === 'broadcast') {
     const text = args.join(' ');
     if (!text) {
@@ -1443,8 +1547,11 @@ function handleTerminalCommand(raw) {
       appendTermOutput(`ERROR: Target required. Usage: ${cmd} <code/user>`, true);
       return;
     }
-    publishPacket(`fdi_operator_v1/cmd/${target}`, { action: cmd }, 1);
-    appendTermOutput(`[+] Action '${cmd}' signaled to ${target}`);
+    const subs = getDiscoveredSubjects();
+    const sub = subs.find((s) => s.accessCode.toUpperCase() === target.toUpperCase() || s.username.toUpperCase() === target.toUpperCase());
+    const targetCode = sub ? sub.accessCode : target;
+    publishPacket(`fdi_operator_v1/cmd/${targetCode}`, { action: cmd }, 1);
+    appendTermOutput(`[+] Action '${cmd}' signaled to ${sub ? `${sub.username} (${targetCode})` : targetCode}`);
     showToast(`Action ${cmd} executed`);
   } else {
     appendTermOutput(`UNKNOWN COMMAND: ${cmd}. Type 'help' for instructions.`, true);
@@ -1698,6 +1805,10 @@ function appendInterceptMessage(msg) {
   if (msg.id && processedInterceptIds.has(msg.id)) return;
   if (msg.id) processedInterceptIds.add(msg.id);
 
+  if (msg.kind === 'file' && msg.file) {
+    vaultFiles.push(msg.file);
+  }
+
   interceptedMessages.push(msg);
 
   // Group by bilateral pair
@@ -1837,6 +1948,19 @@ function runClientFileForensics(fileObj) {
 
   const byteSample = atob(fileObj.dataUrl.split(',')[1] || '').slice(0, 512);
   let hexLines = [];
+  const freq = new Array(256).fill(0);
+  for (let i = 0; i < byteSample.length; i++) {
+    freq[byteSample.charCodeAt(i) & 0xff]++;
+  }
+  let entropy = 0;
+  if (byteSample.length > 0) {
+    for (let i = 0; i < 256; i++) {
+      if (freq[i] > 0) {
+        const p = freq[i] / byteSample.length;
+        entropy -= p * Math.log2(p);
+      }
+    }
+  }
   for (let i = 0; i < byteSample.length; i += 16) {
     let hexPart = '';
     let asciiPart = '';
@@ -1863,7 +1987,7 @@ function runClientFileForensics(fileObj) {
         </div>
         <div class="report-card">
           <div class="report-card-title">SHANNON ENTROPY (0-8)</div>
-          <div class="report-card-val">6.84</div>
+          <div class="report-card-val">${entropy.toFixed(2)}</div>
         </div>
         <div class="report-card">
           <div class="report-card-title">FILE SIZE</div>
@@ -1985,7 +2109,7 @@ function loadMonitorStats() {
   $('#mon-stat-users').textContent = subs.length + 1;
   $('#mon-stat-online').textContent = mqttConnected ? subs.length + 1 : 0;
   $('#mon-stat-msgs').textContent = interceptedMessages.length;
-  $('#mon-stat-grants').textContent = Object.keys(getStoredGrants()).length;
+  $('#mon-stat-grants').textContent = Math.max(activeNetworkLinks.size, Object.keys(getStoredGrants()).length);
 
   renderRadarInterconnectTable();
 
