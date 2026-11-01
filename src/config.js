@@ -44,7 +44,7 @@ module.exports = {
   DB_FILE: path.join(DATA_DIR, 'operator.db'),
   JWT_SECRET: process.env.JWT_SECRET || secrets.jwtSecret,
   MASTER_KEY: Buffer.from(masterKeyHex, 'hex'),
-  ADMIN_USERNAME: (process.env.ADMIN_USERNAME || 'TANNER').trim(),
+  ADMIN_USERNAME: (process.env.ADMIN_USERNAME || 'OPERATOR').trim(),
   ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || '',
   ACCESS_WINDOW_MS: (Number(process.env.ACCESS_WINDOW_HOURS) || 5) * 60 * 60 * 1000,
   LOGIN_SESSION_MS: 12 * 60 * 60 * 1000,

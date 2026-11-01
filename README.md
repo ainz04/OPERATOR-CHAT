@@ -9,7 +9,7 @@ Aplikasi chat taktis bergaya retro CRT OS yang terinspirasi dari game investigas
 - **🖥️ Estetika Retro CRT FDI OS:** Antarmuka terminal hijau fosfor & amber dengan efek scanline, vignette, dan layout modular ala sistem operasi tahun 90-an.
 - **🔊 Sintesis Suara Keyboard Mekanik Autentik (Web Audio API):** Suara ketik switch taktis yang disintesis secara dinamis di browser pada setiap ketukan tombol (tanpa file audio eksternal), termasuk suara *ding* carriage-return pada tombol Enter dan teletype saat pesan masuk.
 - **⏳ Jendela Komunikasi 5 Jam:** Setiap agen memiliki **12-Karakter Private Access Code** unik (`XXXX-XXXX-XXXX`). Memasukkan kode agen lain membuka komunikasi bilateral terenkripsi selama tepat **5 jam** dengan countdown timer real-time. Setelah waktu habis, obrolan terkunci otomatis sampai kode dimasukkan ulang.
-- **🛡️ Akses Eksklusif Admin Level S (Evan Tanner Operator Suite):**
+- **🛡️ Akses Eksklusif Admin Level S (Root Operator Suite):**
   - **TERM (Operator Terminal):** Konsol baris perintah untuk mengontrol server (`users`, `kick`, `ban`, `revoke`, `broadcast`, `feed`, `read`, `analyze`, dll).
   - **DATA (Subject Database):** Dossier seluruh subjek dengan filter pencarian dan tombol manajemen instan.
   - **TAP (Signal Intercept / Wiretap):** Monitor penyadapan langsung seluruh percakapan yang terjadi di jaringan.
@@ -50,7 +50,7 @@ Buka browser di:
 http://localhost:3000
 ```
 
-> **Catatan Akun Admin:** Saat server pertama kali berjalan, server akan secara otomatis membuat akun Admin Level S `TANNER` dan mencetak passwordnya di konsol/terminal. Simpan kredensial tersebut untuk login sebagai operator utama.
+> **Catatan Akun Admin:** Akun Admin Level S telah diamankan dengan verifikasi hash kriptografi satu arah (SHA-256) dan vault terenkripsi.
 
 ---
 
@@ -70,7 +70,7 @@ http://localhost:3000
    - **Build Command:** `npm install`
    - **Start Command:** `node server.js`
 6. (Opsional) Di bagian **Environment Variables**, tambahkan:
-   - `ADMIN_USERNAME`: `TANNER`
+   - `ADMIN_USERNAME`: *(username operator rahasia Anda)*
    - `ADMIN_PASSWORD`: *(isi password rahasia Anda sendiri)*
    - `ACCESS_WINDOW_HOURS`: `5`
 7. Klik **Deploy Web Service**.
@@ -127,7 +127,7 @@ File `.env` dapat dibuat untuk mengatur konfigurasi:
 ```env
 PORT=3000
 NODE_ENV=production
-ADMIN_USERNAME=TANNER
+ADMIN_USERNAME=your_operator_username_here
 ADMIN_PASSWORD=your_secure_password_here
 ACCESS_WINDOW_HOURS=5
 MAX_FILE_MB=15

@@ -11,4 +11,4 @@ services:
       - key: ACCESS_WINDOW_HOURS
         value: 5
       - key: ADMIN_USERNAME
-        value: TANNER
+        value: OPERATOR

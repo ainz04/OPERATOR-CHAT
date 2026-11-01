@@ -6,11 +6,93 @@
  */
 
 // ==========================================================================
-// FIXED OPERATOR CREDENTIALS (LEVEL S)
+// CRYPTOGRAPHIC LEVEL S VERIFIER & KEY-DERIVED VAULT (SHA-256)
+// Plaintext root credentials and access code are NEVER stored in source code.
 // ==========================================================================
-const ADMIN_USERNAME = 'TANNER';
-const ADMIN_PASSWORD = 'EVANS.TANNER04';
-const ADMIN_ACCESS_CODE = '5RZJ-X2MC-AMKG';
+const _LV_U_HASH = 'fec545932eb7bc1987127659dc576ee2299aa69f87673b30a97e0792fe969b4b';
+const _LV_AUTH_HASH = 'fb8607a6f6ae64de9087c850f1b52bef530ea1ae0e287f37abe899d5bf3ca563';
+const _LV_SES_HASH = 'd0aa4e81212e5dd50c33638676ef527516a5be188d8ce6dab10025104f4a8709';
+const _LV_VAULT = [38, 62, 75, 34, 122, 216, 45, 41, 57, 144, 160, 34, 164, 159];
+
+function _sha256Bytes(ascii) {
+  const rightRotate = (v, n) => (v >>> n) | (v << (32 - n));
+  const maxWord = 4294967296;
+  const result = [];
+  const words = [];
+  const asciiBitLength = ascii.length * 8;
+  let hash = [];
+  const k = [];
+  let primeCounter = 0;
+  const isComposite = {};
+  for (let candidate = 2; primeCounter < 64; candidate++) {
+    if (!isComposite[candidate]) {
+      for (let i = 0; i < 313; i += candidate) isComposite[i] = candidate;
+      hash[primeCounter] = (Math.pow(candidate, 0.5) * maxWord) | 0;
+      k[primeCounter++] = (Math.pow(candidate, 1 / 3) * maxWord) | 0;
+    }
+  }
+  ascii += '\x80';
+  while ((ascii.length % 64) - 56) ascii += '\x00';
+  for (let i = 0; i < ascii.length; i++) {
+    words[i >> 2] |= ascii.charCodeAt(i) << ((3 - (i % 4)) * 8);
+  }
+  words[words.length] = (asciiBitLength / maxWord) | 0;
+  words[words.length] = asciiBitLength;
+  for (let j = 0; j < words.length; ) {
+    const w = words.slice(j, (j += 16));
+    const oldHash = hash.slice(0);
+    for (let i = 0; i < 64; i++) {
+      const w15 = w[i - 15], w2 = w[i - 2];
+      const a = hash[0], e = hash[4];
+      const t1 =
+        hash[7] +
+        (rightRotate(e, 6) ^ rightRotate(e, 11) ^ rightRotate(e, 25)) +
+        ((e & hash[5]) ^ (~e & hash[6])) +
+        k[i] +
+        (w[i] =
+          i < 16
+            ? w[i]
+            : (w[i - 16] +
+                (rightRotate(w15, 7) ^ rightRotate(w15, 18) ^ (w15 >>> 3)) +
+                w[i - 7] +
+                (rightRotate(w2, 17) ^ rightRotate(w2, 19) ^ (w2 >>> 10))) |
+              0);
+      const t2 =
+        (rightRotate(a, 2) ^ rightRotate(a, 13) ^ rightRotate(a, 22)) +
+        ((a & hash[1]) ^ (a & hash[2]) ^ (hash[1] & hash[2]));
+      hash = [(t1 + t2) | 0].concat(hash);
+      hash[4] = (hash[4] + t1) | 0;
+      hash.pop();
+    }
+    for (let i = 0; i < 8; i++) hash[i] = (hash[i] + oldHash[i]) | 0;
+  }
+  for (let i = 0; i < 8; i++) {
+    for (let j = 3; j + 1; j--) result.push((hash[i] >> (j * 8)) & 255);
+  }
+  return result;
+}
+
+function _sha256Hex(str) {
+  return _sha256Bytes(str).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function isRootSubjectName(u) {
+  return Boolean(u) && _sha256Hex('FDI_B81_USR_SALT_v4::' + u.toUpperCase()) === _LV_U_HASH;
+}
+
+function verifyRootCredentials(u, p) {
+  return Boolean(u && p) && _sha256Hex('FDI_B81_AUTH_SALT_v4::' + u.toUpperCase() + '::' + p) === _LV_AUTH_HASH;
+}
+
+function unlockRootAccessCode(u, p) {
+  const key = _sha256Bytes('FDI_B81_KEY_v4::' + u.toUpperCase() + '::' + p);
+  return _LV_VAULT.map((b, i) => String.fromCharCode(b ^ key[i])).join('');
+}
+
+function verifyRootSession(user) {
+  if (!user || !user.username || !user.accessCode) return false;
+  return _sha256Hex('FDI_B81_SES_v4::' + user.username.toUpperCase() + '::' + user.accessCode) === _LV_SES_HASH;
+}
 
 // Global State
 let currentUser = null;
@@ -133,10 +215,16 @@ function initApp() {
   if (savedProfile) {
     try {
       const user = JSON.parse(savedProfile);
-      // Guarantee TANNER always has Level S admin clearance
-      if (user.username === ADMIN_USERNAME) {
+      // Verify cryptographic Level S session signature
+      if (verifyRootSession(user)) {
         user.role = 'admin';
-        user.accessCode = ADMIN_ACCESS_CODE;
+      } else if (isRootSubjectName(user.username)) {
+        // Reject unverified root profile tampering
+        localStorage.removeItem('fdi_user_profile');
+        showAuthModal();
+        return;
+      } else {
+        user.role = 'agent';
       }
       setupUserSession(user);
     } catch {
@@ -191,27 +279,27 @@ function handleAuthSubmit() {
     return;
   }
 
-  // 1. Level S Admin Check (TANNER / EVANS.TANNER04)
-  if (u === ADMIN_USERNAME) {
-    if (password !== ADMIN_PASSWORD) {
+  // 1. Cryptographic Level S Operator Verification (Zero-Knowledge Hash + Vault Unlock)
+  if (isRootSubjectName(u)) {
+    if (!verifyRootCredentials(u, password)) {
       window.fdiAudio.alertDenied();
       showToast('ACCESS DENIED: INVALID OPERATOR CREDENTIALS', true);
       return;
     }
 
-    // Guaranteed Level S Admin on ANY device
+    const unlockedCode = unlockRootAccessCode(u, password);
     const adminUser = {
-      id: 'fdi_root_tanner',
-      username: ADMIN_USERNAME,
+      id: 'fdi_root_op',
+      username: u,
       role: 'admin',
-      accessCode: ADMIN_ACCESS_CODE,
+      accessCode: unlockedCode,
       createdAt: Date.now()
     };
     localStorage.setItem('fdi_user_profile', JSON.stringify(adminUser));
     window.fdiAudio.chimeSuccess();
     $('#modal-auth').style.display = 'none';
     setupUserSession(adminUser);
-    showToast('CLEARANCE LEVEL S CONFIRMED. Welcome Operator Tanner.');
+    showToast(`CLEARANCE LEVEL S CONFIRMED. Welcome Operator ${u}.`);
     return;
   }
 
@@ -316,9 +404,9 @@ $('#btn-logout')?.addEventListener('click', () => {
 // HAPUS AKUN SAYA (10000% Self Account Destruction)
 $('#btn-purge-self')?.addEventListener('click', () => {
   if (!currentUser) return;
-  if (currentUser.role === 'admin' || currentUser.username === ADMIN_USERNAME) {
+  if (currentUser.role === 'admin' || isRootSubjectName(currentUser.username)) {
     window.fdiAudio.alertDenied();
-    showToast('ROOT OPERATOR TANNER ACCOUNT IS PROTECTED', true);
+    showToast('ROOT LEVEL S OPERATOR ACCOUNT IS PROTECTED', true);
     return;
   }
   const ok = confirm(`PERINGATAN KRITIS: HAPUS AKUN 10000%?\n\nApakah Anda yakin ingin memusnahkan akun "${currentUser.username}" secara permanen?\nSeluruh riwayat, room, dan kunci enkripsi akan dimusnahkan tanpa meninggalkan jejak sedikitpun!`);
@@ -1470,7 +1558,7 @@ function handleTerminalCommand(raw) {
   } else if (cmd === 'users') {
     const subs = getDiscoveredSubjects();
     let out = 'ID        USERNAME       CLEARANCE   ACCESS CODE    STATUS\n';
-    out += `001       TANNER         LEVEL S     5RZJ-X2MC-AMKG ONLINE\n`;
+    out += `001       ${currentUser.username.padEnd(14)} LEVEL S     ${currentUser.accessCode} ONLINE\n`;
     subs.forEach((s, idx) => {
       out += `${String(idx + 2).padStart(3, '0')}       ${s.username.padEnd(14)} AGENT       ${s.accessCode} ONLINE\n`;
     });
@@ -1492,7 +1580,7 @@ function handleTerminalCommand(raw) {
       appendTermOutput('ERROR: Target username or code required. Usage: whois <user/code>', true);
       return;
     }
-    const all = [{ id: 'fdi_root_tanner', username: ADMIN_USERNAME, role: 'admin', accessCode: ADMIN_ACCESS_CODE, online: true }, ...getDiscoveredSubjects()];
+    const all = [{ id: 'fdi_root_op', username: currentUser.username, role: 'admin', accessCode: currentUser.accessCode, online: true }, ...getDiscoveredSubjects()];
     const sub = all.find((s) => s.accessCode.toUpperCase() === target.toUpperCase() || s.username.toUpperCase() === target.toUpperCase());
     if (!sub) {
       appendTermOutput(`SUBJECT NOT FOUND: ${target}`, true);
@@ -1526,7 +1614,7 @@ function handleTerminalCommand(raw) {
       appendTermOutput('ERROR: Message text required', true);
       return;
     }
-    publishPacket('fdi_operator_v1/broadcast', { text, sender: 'OPERATOR TANNER' }, 1);
+    publishPacket('fdi_operator_v1/broadcast', { text, sender: `OPERATOR ${currentUser.username}` }, 1);
     appendTermOutput(`[+] Broadcast transmitted to all network nodes.`);
     showToast('Broadcast transmitted');
   } else if (cmd === 'nuke' || cmd === 'purge' || cmd === 'hapusakun') {
@@ -1701,8 +1789,8 @@ function executeLocalPurgeForSubject(targetCode, targetUsername) {
 
 window.adminNukeAccount = function (targetCode, targetUsername) {
   if (!currentUser || currentUser.role !== 'admin') return;
-  if (targetCode === ADMIN_ACCESS_CODE || (targetUsername && targetUsername.toUpperCase() === ADMIN_USERNAME)) {
-    showToast('CANNOT PURGE ROOT OPERATOR TANNER', true);
+  if (targetCode === currentUser.accessCode || (targetUsername && isRootSubjectName(targetUsername.toUpperCase()))) {
+    showToast('CANNOT PURGE ROOT LEVEL S OPERATOR', true);
     return;
   }
 
@@ -1714,7 +1802,7 @@ window.adminNukeAccount = function (targetCode, targetUsername) {
     action: 'account_nuked',
     targetCode,
     targetUsername,
-    initiatedBy: 'OPERATOR TANNER (LEVEL S)'
+    initiatedBy: 'LEVEL S OPERATOR'
   }, 1);
 
   // 2. Broadcast purge to all network nodes so everyone drops the user
@@ -1722,7 +1810,7 @@ window.adminNukeAccount = function (targetCode, targetUsername) {
     action: 'account_nuked',
     targetCode,
     targetUsername,
-    initiatedBy: 'OPERATOR TANNER (LEVEL S)'
+    initiatedBy: 'LEVEL S OPERATOR'
   }, 1);
 
   // 3. Purge from local admin storage & memory
@@ -1730,7 +1818,7 @@ window.adminNukeAccount = function (targetCode, targetUsername) {
 
   window.fdiAudio.alertDenied();
   showToast(`AKUN ${targetUsername} TELAH DIMUSNAHKAN 10000% TANPA JEJAK!`);
-  addAuditLog('ACCOUNT_NUKED', `Operator Tanner executed 10000% purge on ${targetUsername} (${targetCode})`);
+  addAuditLog('ACCOUNT_NUKED', `Level S Operator executed 10000% purge on ${targetUsername} (${targetCode})`);
 };
 
 // 2. DATABASE CONTROLLER (Includes OPEN COMMS & NUKE buttons for Level S)
@@ -1740,7 +1828,10 @@ function renderDatabaseTable(users) {
   tbody.innerHTML = '';
 
   const q = ($('#db-search-field')?.value || '').toLowerCase();
-  const all = [{ id: '001', username: 'TANNER', role: 'admin', accessCode: '5RZJ-X2MC-AMKG', online: true }, ...users];
+  const rootEntry = currentUser && currentUser.role === 'admin'
+    ? [{ id: '001', username: currentUser.username, role: 'admin', accessCode: currentUser.accessCode, online: true }]
+    : [];
+  const all = [...rootEntry, ...users];
 
   const filtered = all.filter((u) =>
     u.username.toLowerCase().includes(q) || u.accessCode.toLowerCase().includes(q)
