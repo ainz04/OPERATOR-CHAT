@@ -17,6 +17,13 @@
     <!-- Top System Header Bar -->
     <header class="fdi-topbar">
       <div class="fdi-brand">
+        <button class="mobile-menu-trigger" id="btn-mobile-drawer" title="Open Tactical Menu" aria-label="Menu">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="3" y1="6" x2="21" y2="6"/>
+            <line x1="3" y1="12" x2="21" y2="12"/>
+            <line x1="3" y1="18" x2="21" y2="18"/>
+          </svg>
+        </button>
         <div class="fdi-badge">
           <svg class="fdi-logo-icon" viewBox="0 0 24 24">
             <polygon points="12,2 22,8.5 22,15.5 12,22 2,15.5 2,8.5" fill="none" stroke="currentColor" stroke-width="2"/>
@@ -28,11 +35,11 @@
       </div>
 
       <div class="fdi-status-cluster">
-        <div class="stat-pill">
+        <div class="stat-pill" id="top-clock-pill">
           <span>TIME:</span>
           <span class="stat-val" id="top-clock">00:00:00</span>
         </div>
-        <div class="stat-pill">
+        <div class="stat-pill" id="top-link-pill">
           <span>LINK:</span>
           <span class="stat-val" id="top-link-status" style="color:var(--fdi-amber);">CONNECTING...</span>
         </div>
@@ -47,6 +54,105 @@
         </div>
       </div>
     </header>
+
+    <!-- Mobile Left Sidebar Drawer (Dedicated Mobile Interface — Hidden on Laptop/Desktop) -->
+    <div class="mobile-drawer-backdrop" id="mobile-drawer-backdrop"></div>
+    <aside class="mobile-left-drawer" id="mobile-left-drawer">
+      <div class="mobile-drawer-header">
+        <div class="fdi-badge">
+          <svg class="fdi-logo-icon" viewBox="0 0 24 24">
+            <polygon points="12,2 22,8.5 22,15.5 12,22 2,15.5 2,8.5" fill="none" stroke="currentColor" stroke-width="2"/>
+            <circle cx="12" cy="12" r="3" fill="currentColor"/>
+          </svg>
+          <span>FDI TACTICAL MENU</span>
+        </div>
+        <button class="win-btn" id="btn-close-mobile-drawer" title="Close Menu">X</button>
+      </div>
+
+      <div class="mobile-drawer-body">
+        <!-- Active Subject / Operator Identity Card -->
+        <div class="mobile-drawer-profile-card">
+          <div class="mobile-drawer-row">
+            <span class="id-label">SUBJECT IDENTIFIER</span>
+            <span id="mobile-drawer-clearance" class="mobile-clearance-pill">CLEARANCE: AGENT</span>
+          </div>
+          <div id="mobile-drawer-username" class="mobile-drawer-username">AGENT</div>
+
+          <div class="id-label" style="margin-top:10px;">PRIVATE ACCESS CODE</div>
+          <div class="id-code-row">
+            <span class="my-access-code" id="mobile-drawer-code" style="font-size:18px;">---- ---- ----</span>
+            <button class="btn-copy-code" id="btn-mobile-copy-code">COPY</button>
+          </div>
+        </div>
+
+        <!-- System Telemetry & Audio Toggle -->
+        <div class="mobile-drawer-section">
+          <div class="id-label" style="margin-bottom:6px;">TERMINAL TELEMETRY</div>
+          <div class="mobile-telemetry-row">
+            <span>CLOUD LINK:</span>
+            <span id="mobile-drawer-link" style="color:var(--fdi-green); font-weight:700;">ACTIVE</span>
+          </div>
+          <div class="mobile-telemetry-row" style="margin-top:6px;">
+            <span>SOUND SYNTHESIS:</span>
+            <button class="btn-retro-sm" id="btn-mobile-audio-toggle" style="padding:3px 10px;">AUDIO: ON</button>
+          </div>
+        </div>
+
+        <!-- Quick Module Navigation in Sidebar -->
+        <div class="mobile-drawer-section">
+          <div class="id-label" style="margin-bottom:6px;">WORKSPACE MODULES</div>
+          <div class="mobile-drawer-nav" id="mobile-drawer-nav-list">
+            <button class="mobile-nav-item active" data-mod="chat">
+              <span>[01] COMMS CHANNEL</span>
+              <span>&rarr;</span>
+            </button>
+            <div id="mobile-admin-nav-items" style="display:none; flex-direction:column; gap:6px;">
+              <button class="mobile-nav-item admin-item" data-mod="terminal">
+                <span>[02] LEVEL S TERMINAL</span>
+                <span>&rarr;</span>
+              </button>
+              <button class="mobile-nav-item admin-item" data-mod="database">
+                <span>[03] SUBJECT DOSSIERS (DATA)</span>
+                <span>&rarr;</span>
+              </button>
+              <button class="mobile-nav-item admin-item" data-mod="intercept">
+                <span>[04] SIGNAL WIRETAP (TAP)</span>
+                <span>&rarr;</span>
+              </button>
+              <button class="mobile-nav-item admin-item" data-mod="analyzer">
+                <span>[05] FILE FORENSICS (FILE)</span>
+                <span>&rarr;</span>
+              </button>
+              <button class="mobile-nav-item admin-item" data-mod="audio">
+                <span>[06] AUDIO OSCILLOSCOPE</span>
+                <span>&rarr;</span>
+              </button>
+              <button class="mobile-nav-item admin-item" data-mod="decryptor">
+                <span>[07] DECRYPTION MATRIX (CRYPT)</span>
+                <span>&rarr;</span>
+              </button>
+              <button class="mobile-nav-item admin-item" data-mod="monitor">
+                <span>[08] NETWORK RADAR</span>
+                <span>&rarr;</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bottom Account Actions: DISCONNECT & HAPUS AKUN -->
+      <div class="mobile-drawer-footer">
+        <div class="id-label" style="margin-bottom:6px;">SESSION & IDENTITY CONTROL</div>
+        <button class="btn-mobile-action-disconnect" id="btn-mobile-logout">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          <span>DISCONNECT TERMINAL</span>
+        </button>
+        <button class="btn-mobile-action-purge" id="btn-mobile-purge-self" style="display:none;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          <span>HAPUS AKUN (10000%)</span>
+        </button>
+      </div>
+    </aside>
 
     <!-- Master Operator Workspace -->
     <div class="operator-workspace">
@@ -128,6 +234,11 @@
             <div class="chat-main-area">
               <div class="chat-header" id="active-chat-header" style="display:none;">
                 <div class="chat-peer-info">
+                  <button class="mobile-back-btn" id="btn-mobile-back-contacts" title="Kembali ke Daftar Kontak">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
+                      <polyline points="15 18 9 12 15 6"/>
+                    </svg>
+                  </button>
                   <div class="peer-avatar-tag" id="active-peer-avatar">AG</div>
                   <div class="peer-details-col">
                     <div style="display:flex; align-items:center; gap:8px;">

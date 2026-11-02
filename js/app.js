@@ -202,14 +202,49 @@ setInterval(() => {
   updateContactTimers();
 }, 1000);
 
-// Audio Toggle Button
-$('#btn-audio-toggle')?.addEventListener('click', () => {
-  const enabled = window.fdiAudio.toggle();
+// Audio Toggle Button (Desktop & Mobile Sidebar)
+function syncAudioToggleLabels(enabled) {
   const lbl = $('#audio-status-label');
   if (lbl) {
     lbl.textContent = enabled ? 'ON' : 'MUTED';
     lbl.style.color = enabled ? 'var(--fdi-green)' : 'var(--text-dim)';
   }
+  const mobBtn = $('#btn-mobile-audio-toggle');
+  if (mobBtn) {
+    mobBtn.textContent = enabled ? 'AUDIO: ON' : 'AUDIO: MUTED';
+    mobBtn.style.color = enabled ? 'var(--fdi-green)' : 'var(--text-dim)';
+  }
+}
+
+$('#btn-audio-toggle')?.addEventListener('click', () => {
+  const enabled = window.fdiAudio.toggle();
+  syncAudioToggleLabels(enabled);
+});
+
+$('#btn-mobile-audio-toggle')?.addEventListener('click', () => {
+  const enabled = window.fdiAudio.toggle();
+  syncAudioToggleLabels(enabled);
+});
+
+// Mobile Left Sidebar Drawer Controls
+function openMobileDrawer() {
+  $('#mobile-left-drawer')?.classList.add('open');
+  $('#mobile-drawer-backdrop')?.classList.add('open');
+  window.fdiAudio?.beep(950, 0.04);
+}
+
+function closeMobileDrawer() {
+  $('#mobile-left-drawer')?.classList.remove('open');
+  $('#mobile-drawer-backdrop')?.classList.remove('open');
+}
+
+$('#btn-mobile-drawer')?.addEventListener('click', openMobileDrawer);
+$('#btn-close-mobile-drawer')?.addEventListener('click', closeMobileDrawer);
+$('#mobile-drawer-backdrop')?.addEventListener('click', closeMobileDrawer);
+
+$('#btn-mobile-back-contacts')?.addEventListener('click', () => {
+  $('#module-chat')?.classList.remove('mobile-chat-open');
+  window.fdiAudio?.beep(800, 0.04);
 });
 
 // ==========================================================================
@@ -221,10 +256,8 @@ function initApp() {
   localStorage.removeItem('fdi_messages');
 
   // Sync initial audio toggle UI state with saved preference
-  const lbl = $('#audio-status-label');
-  if (lbl && window.fdiAudio) {
-    lbl.textContent = window.fdiAudio.enabled ? 'ON' : 'MUTED';
-    lbl.style.color = window.fdiAudio.enabled ? 'var(--fdi-green)' : 'var(--text-dim)';
+  if (window.fdiAudio) {
+    syncAudioToggleLabels(window.fdiAudio.enabled);
   }
 
   const savedProfile = localStorage.getItem('fdi_user_profile');
@@ -360,24 +393,52 @@ function setupUserSession(user) {
   $('#top-username').textContent = user.username;
   $('#my-code-display').textContent = user.accessCode;
 
+  // Sync Mobile Left Sidebar Drawer Identity
+  const mobUser = $('#mobile-drawer-username');
+  const mobCode = $('#mobile-drawer-code');
+  const mobClearance = $('#mobile-drawer-clearance');
+  const mobAdminNav = $('#mobile-admin-nav-items');
+  if (mobUser) mobUser.textContent = user.username;
+  if (mobCode) mobCode.textContent = user.accessCode;
+
   // Level S Admin Indicator, Dock Tools & Permanent Removal of "HAPUS AKUN" Button for Admin
   const adminSlot = $('#admin-indicator-slot');
   const adminTools = $('#admin-dock-tools');
   const purgeSelfBtn = $('#btn-purge-self');
+  const mobilePurgeSelfBtn = $('#btn-mobile-purge-self');
   if (user.role === 'admin' || isProtectedRootTarget(user.accessCode, user.username, user.role)) {
     user.role = 'admin';
+    document.body.classList.add('is-admin-session');
     adminSlot.innerHTML = `<span class="level-s-tag">CLEARANCE: LEVEL S</span>`;
     adminTools.style.display = 'flex';
-    // Permanently remove the "HAPUS AKUN" button from the Admin UI so it can never be clicked
+    if (mobClearance) {
+      mobClearance.textContent = 'CLEARANCE: LEVEL S';
+      mobClearance.className = 'level-s-tag';
+    }
+    if (mobAdminNav) mobAdminNav.style.display = 'flex';
+    // Permanently remove the "HAPUS AKUN" button from both Desktop & Mobile Admin UI so it can never be clicked
     if (purgeSelfBtn) {
       purgeSelfBtn.style.display = 'none';
       purgeSelfBtn.remove();
     }
+    if (mobilePurgeSelfBtn) {
+      mobilePurgeSelfBtn.style.display = 'none';
+      mobilePurgeSelfBtn.remove();
+    }
   } else {
+    document.body.classList.remove('is-admin-session');
     adminSlot.innerHTML = `<span style="font-size:11px; color:var(--text-dim);">CLEARANCE: AGENT</span>`;
     adminTools.style.display = 'none';
+    if (mobClearance) {
+      mobClearance.textContent = 'CLEARANCE: AGENT';
+      mobClearance.className = 'mobile-clearance-pill';
+    }
+    if (mobAdminNav) mobAdminNav.style.display = 'none';
     if (purgeSelfBtn) {
       purgeSelfBtn.style.display = 'inline-flex';
+    }
+    if (mobilePurgeSelfBtn) {
+      mobilePurgeSelfBtn.style.display = 'flex';
     }
   }
 
@@ -402,7 +463,7 @@ function wipeAllClientTraces() {
 }
 
 // DISCONNECT: Burns active rooms and clears history cleanly for non-Level S
-$('#btn-logout')?.addEventListener('click', () => {
+function executeLogoutSession() {
   if (currentUser && currentUser.role !== 'admin' && !isProtectedRootTarget(currentUser.accessCode, currentUser.username, currentUser.role)) {
     // Broadcast session_burned to all active connected peers so their room burns immediately
     const grants = getStoredGrants();
@@ -428,10 +489,13 @@ $('#btn-logout')?.addEventListener('click', () => {
 
   window.fdiAudio.alertDenied();
   window.location.reload();
-});
+}
+
+$('#btn-logout')?.addEventListener('click', executeLogoutSession);
+$('#btn-mobile-logout')?.addEventListener('click', executeLogoutSession);
 
 // HAPUS AKUN SAYA (10000% Self Account Destruction - Strictly Disabled for Level S Admin)
-$('#btn-purge-self')?.addEventListener('click', () => {
+function executeSelfPurgeAccount() {
   if (!currentUser) return;
   if (isProtectedRootTarget(currentUser.accessCode, currentUser.username, currentUser.role)) {
     window.fdiAudio.alertDenied();
@@ -469,19 +533,38 @@ $('#btn-purge-self')?.addEventListener('click', () => {
   window.fdiAudio.alertDenied();
   alert('[10000% VAPORIZED] AKUN & IDENTITAS ANDA TELAH DIHAPUS TOTAL TANPA MENINGGALKAN JEJAK.');
   window.location.reload();
-});
+}
 
-$('#btn-copy-my-code')?.addEventListener('click', () => {
+$('#btn-purge-self')?.addEventListener('click', executeSelfPurgeAccount);
+$('#btn-mobile-purge-self')?.addEventListener('click', executeSelfPurgeAccount);
+
+function copyOwnAccessCode() {
   if (currentUser?.accessCode) {
     navigator.clipboard.writeText(currentUser.accessCode);
     window.fdiAudio.beep(1200, 0.05);
     showToast('Access code copied to clipboard');
   }
-});
+}
+
+$('#btn-copy-my-code')?.addEventListener('click', copyOwnAccessCode);
+$('#btn-mobile-copy-code')?.addEventListener('click', copyOwnAccessCode);
 
 // ==========================================================================
 // SERVERLESS P2P MQTT REAL-TIME ENGINE (Works on GitHub Pages)
 // ==========================================================================
+
+function setLinkStatusUI(text, colorVar) {
+  const topEl = $('#top-link-status');
+  if (topEl) {
+    topEl.textContent = text;
+    topEl.style.color = colorVar;
+  }
+  const mobEl = $('#mobile-drawer-link');
+  if (mobEl) {
+    mobEl.textContent = text;
+    mobEl.style.color = colorVar;
+  }
+}
 
 function initServerlessMQTT() {
   if (mqttReconnectTimer) {
@@ -491,7 +574,7 @@ function initServerlessMQTT() {
 
   if (typeof Paho === 'undefined') {
     console.error('Paho MQTT library not loaded');
-    $('#top-link-status').textContent = 'OFFLINE (LIB MISSING)';
+    setLinkStatusUI('OFFLINE (LIB MISSING)', 'var(--fdi-red)');
     return;
   }
 
@@ -509,16 +592,14 @@ function initServerlessMQTT() {
   const brokerPort = 8084;
   const path = '/mqtt';
 
-  $('#top-link-status').textContent = 'CONNECTING CLOUD...';
-  $('#top-link-status').style.color = 'var(--fdi-amber)';
+  setLinkStatusUI('CONNECTING CLOUD...', 'var(--fdi-amber)');
 
   mqttClient = new Paho.Client(brokerHost, Number(brokerPort), path, clientId);
 
   mqttClient.onConnectionLost = (resp) => {
     console.warn('MQTT Connection lost:', resp.errorMessage);
     mqttConnected = false;
-    $('#top-link-status').textContent = 'DISCONNECTED (RETRYING)';
-    $('#top-link-status').style.color = 'var(--fdi-red)';
+    setLinkStatusUI('DISCONNECTED (RETRYING)', 'var(--fdi-red)');
     if (mqttReconnectTimer) clearTimeout(mqttReconnectTimer);
     mqttReconnectTimer = setTimeout(initServerlessMQTT, 4000);
   };
@@ -534,8 +615,7 @@ function initServerlessMQTT() {
     cleanSession: true,
     onSuccess: () => {
       mqttConnected = true;
-      $('#top-link-status').textContent = 'CLOUD WSS ACTIVE';
-      $('#top-link-status').style.color = 'var(--fdi-green)';
+      setLinkStatusUI('CLOUD WSS ACTIVE', 'var(--fdi-green)');
       addAuditLog('LINK_ESTABLISHED', `Connected to Cloud WSS Node (${brokerHost})`);
 
       if (currentUser.role === 'admin') {
@@ -964,6 +1044,7 @@ function clearStoredMessagesForPeer(peerCode) {
 
 function unselectActiveContact(burnMessage = null) {
   activeContact = null;
+  $('#module-chat')?.classList.remove('mobile-chat-open');
   const emptyPlaceholder = $('#empty-chat-placeholder');
   const msgContainer = $('#messages-container');
   if (msgContainer) {
@@ -988,6 +1069,7 @@ function selectContact(peerCode) {
   const contact = contactsMap.get(peerCode);
   if (!contact) return;
   activeContact = contact;
+  $('#module-chat')?.classList.add('mobile-chat-open');
 
   renderContactsList();
   updateActiveContactHeader();
@@ -1495,21 +1577,31 @@ function registerDiscoveredSubject(data) {
 // LEVEL S OPERATOR DOCK & EXCLUSIVE MODULES
 // ==========================================================================
 
+function switchToWorkspaceModule(mod) {
+  $$('.dock-btn').forEach((b) => b.classList.toggle('active', b.dataset.mod === mod));
+  $$('.mobile-nav-item').forEach((b) => b.classList.toggle('active', b.dataset.mod === mod));
+
+  $$('.workspace-module').forEach((m) => (m.style.display = 'none'));
+  const targetMod = $(`#module-${mod}`);
+  if (targetMod) {
+    targetMod.style.display = 'flex';
+    targetMod.style.flexDirection = 'column';
+    targetMod.style.width = '100%';
+    window.fdiAudio.beep(1100, 0.04);
+    onModuleOpen(mod);
+  }
+}
+
 $$('.dock-btn').forEach((btn) => {
   btn.addEventListener('click', () => {
-    const mod = btn.dataset.mod;
-    $$('.dock-btn').forEach((b) => b.classList.remove('active'));
-    btn.classList.add('active');
+    switchToWorkspaceModule(btn.dataset.mod);
+  });
+});
 
-    $$('.workspace-module').forEach((m) => (m.style.display = 'none'));
-    const targetMod = $(`#module-${mod}`);
-    if (targetMod) {
-      targetMod.style.display = 'flex';
-      targetMod.style.flexDirection = 'column';
-      targetMod.style.width = '100%';
-      window.fdiAudio.beep(1100, 0.04);
-      onModuleOpen(mod);
-    }
+$$('.mobile-nav-item').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    switchToWorkspaceModule(btn.dataset.mod);
+    closeMobileDrawer();
   });
 });
 
